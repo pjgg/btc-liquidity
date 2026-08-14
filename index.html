@@ -189,6 +189,10 @@
         </div>
       </div>
       <div class="field">
+        <label for="criterion">Elegir serie por</label>
+        <button id="criterion" aria-pressed="false" autocomplete="off">Variaciones</button>
+      </div>
+      <div class="field">
         <label for="logScale">Eje Y</label>
         <button id="logScale" aria-pressed="true">Logarítmico</button>
       </div>
@@ -291,7 +295,7 @@ const SERIES = [
 
 const byKey = new Map(SERIES.map((s) => [s.key, s]));
 
-const state = { rows: [], meta: null, logScale: true };
+const state = { rows: [], meta: null, logScale: true, criterion: "changes" };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -394,18 +398,28 @@ function strength(correlation, samples) {
 
 // La serie por defecto es la que mejor correlaciona al desfase aplicado. Se mide
 // en lugar de elegirla a mano, que era lo que hacía antes.
-function bestSeries(rows, lag) {
-  // Se decide por la correlación de variaciones, que es la que mide relación real;
-  // hacerlo por la de niveles elegiría siempre la de tendencia más parecida.
+// La serie de arranque, por el criterio que el usuario haya elegido.
+//
+// Por variaciones sale la de relación real más fuerte, que es la medida que no se
+// voltea al cambiar de ventana. Por niveles sale la de cifra más alta, que es la
+// que tiene la tendencia más parecida a BTC — llamativa, pero eso es justo la
+// trampa. Las dos cifras están siempre en pantalla, así que la elección del
+// criterio no esconde nada.
+function bestSeries(rows, lag, criterion) {
   let best = null;
   for (const series of SERIES) {
-    const measured = correlationAtLag(rows, series.key, lag);
-    if (!Number.isFinite(measured.correlation)) continue;
-    if (!best || measured.correlation > best.correlation) {
-      best = { key: series.key, correlation: measured.correlation };
-    }
+    const r = criterion === "levels"
+      ? levelCorrelationAtLag(rows, series.key, lag)
+      : correlationAtLag(rows, series.key, lag).correlation;
+    if (!Number.isFinite(r)) continue;
+    if (!best || r > best.r) best = { key: series.key, r };
   }
   return best ? best.key : SERIES[0].key;
+}
+
+function applyBestSeries() {
+  const lag = Number(document.getElementById("lag").value);
+  document.getElementById("series").value = bestSeries(selectedRows(), lag, state.criterion);
 }
 
 // Ajuste log-log del precio sobre la liquidez desfasada. Sirve para la columna
@@ -780,6 +794,17 @@ function wireControls() {
     document.getElementById(id).addEventListener("input", render);
   }
 
+  // Cambiar el criterio vuelve a elegir la serie; cambiar el rango o el desfase no,
+  // para no pisar una serie que hayas seleccionado a mano.
+  const criterionButton = document.getElementById("criterion");
+  criterionButton.addEventListener("click", () => {
+    state.criterion = state.criterion === "changes" ? "levels" : "changes";
+    criterionButton.setAttribute("aria-pressed", String(state.criterion === "levels"));
+    criterionButton.textContent = state.criterion === "levels" ? "Niveles" : "Variaciones";
+    applyBestSeries();
+    render();
+  });
+
   const logButton = document.getElementById("logScale");
   logButton.addEventListener("click", () => {
     state.logScale = !state.logScale;
@@ -813,7 +838,7 @@ async function main() {
 
   // La serie de arranque se mide sobre el rango y el desfase que se van a mostrar,
   // no sobre otros: elegir la mejor a 7 días y dibujarla a 85 daba un r sin sentido.
-  document.getElementById("series").value = bestSeries(selectedRows(), DEFAULT_LAG);
+  applyBestSeries();
 
   wireControls();
   render();
