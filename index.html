@@ -214,10 +214,6 @@
         <button id="logScale" aria-pressed="true">Logarítmico</button>
       </div>
       <div class="field">
-        <label for="showInterval">Intervalo 95 %</label>
-        <button id="showInterval" aria-pressed="true">Visible</button>
-      </div>
-      <div class="field">
         <label for="resetLag">Desfase</label>
         <button id="resetLag">Volver al óptimo</button>
       </div>
@@ -300,6 +296,13 @@
 const DAY_MS = 86400000;
 const MAX_LAG = 180;
 const CHANGE_WINDOW = 30;   // días de la variación logarítmica usada para correlacionar
+
+// Las muestras se solapan: dos variaciones a 30 días consecutivas comparten 29 de
+// sus 30 días, así que N muestras crudas valen aproximadamente N/30 independientes.
+// Exigir 10 efectivas evita el sobreajuste que aparece al buscar entre 181 desfases
+// con pocos datos, donde siempre sale una correlación altísima y sin significado.
+const MIN_EFFECTIVE_SAMPLES = 10;
+const MIN_SAMPLES = MIN_EFFECTIVE_SAMPLES * CHANGE_WINDOW;
 const Z95 = 1.96;
 
 // Series que determinan la frescura de cada agregado. La más antigua manda: es la
@@ -314,7 +317,7 @@ const LABELS = {
   global_cb_musd: "Balances globales",
 };
 
-const state = { rows: [], meta: null, lagTouched: false, logScale: true, showInterval: true };
+const state = { rows: [], meta: null, lagTouched: false, logScale: true };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -373,22 +376,32 @@ function pearson(xs, ys) {
 
 // Correlación entre variaciones logarítmicas, no entre niveles. Sobre niveles, dos
 // series con tendencia correlacionan casi perfectamente y el argmax no significa nada.
+// Desfase máximo que el rango puede sostener dejando MIN_SAMPLES muestras.
+function maxEvaluableLag(rowCount) {
+  return Math.min(MAX_LAG, rowCount - CHANGE_WINDOW - MIN_SAMPLES);
+}
+
 function lagCorrelations(logPrice, logLiquidity) {
   const n = logPrice.length;
   const out = [];
+  const limit = maxEvaluableLag(n);
 
-  for (let lag = 0; lag <= MAX_LAG; lag++) {
+  for (let lag = 0; lag <= limit; lag++) {
     const priceChange = [], liquidityChange = [];
     for (let i = Math.max(CHANGE_WINDOW, lag + CHANGE_WINDOW); i < n; i++) {
       priceChange.push(logPrice[i] - logPrice[i - CHANGE_WINDOW]);
       liquidityChange.push(logLiquidity[i - lag] - logLiquidity[i - lag - CHANGE_WINDOW]);
     }
+    // Un desfase que no deja muestras suficientes no se evalúa: incluirlo sólo
+    // añade candidatos ruidosos a un argmax que ya elige entre demasiados.
+    if (priceChange.length < MIN_SAMPLES) continue;
     out.push({ lag, correlation: pearson(priceChange, liquidityChange), n: priceChange.length });
   }
   return out;
 }
 
 function bestLag(correlations) {
+  if (!correlations.length) return null;
   let best = correlations[0];
   for (const candidate of correlations) {
     if (Number.isFinite(candidate.correlation) &&
@@ -604,13 +617,21 @@ const trillions = (musd) => (musd / 1e6).toLocaleString("es-ES",
 
 // La correlación entre variaciones es la que dice si la relación existe. Se
 // nombra en palabras para que nadie lea un 0,18 como si fuera una predicción.
-function strength(correlation) {
+function strength(correlation, samples) {
   const r = Math.abs(correlation);
   if (!Number.isFinite(r)) return { word: "sin datos", weak: true };
-  if (r < 0.20) return { word: "muy débil", weak: true };
-  if (r < 0.40) return { word: "débil", weak: true };
-  if (r < 0.60) return { word: "moderada", weak: false };
-  return { word: "fuerte", weak: false };
+
+  // Un r alto sobre pocas muestras independientes no es una relación fuerte, es
+  // sobreajuste. La cifra manda sobre el adjetivo sólo si hay datos que la sostengan.
+  const effective = samples / CHANGE_WINDOW;
+  if (effective < MIN_EFFECTIVE_SAMPLES) {
+    return { word: "no fiable", weak: true, thin: true, effective };
+  }
+
+  if (r < 0.20) return { word: "muy débil", weak: true, effective };
+  if (r < 0.40) return { word: "débil", weak: true, effective };
+  if (r < 0.60) return { word: "moderada", weak: false, effective };
+  return { word: "fuerte", weak: false, effective };
 }
 
 function axisDefaults() {
@@ -646,14 +667,10 @@ function renderMain(model, bandPercent) {
   const canvas = document.getElementById("mainChart");
   const datasets = [];
 
-  if (state.showInterval) {
-    datasets.push(
-      line("Intervalo 95 % (alto)", model.intervalHigh, "transparent",
-           { borderWidth: 0, backgroundColor: css("--band-interval"), fill: "+1", order: 5 }),
-      line("Intervalo 95 % (bajo)", model.intervalLow, "transparent", { borderWidth: 0, order: 5 }),
-    );
-  }
   datasets.push(
+    line("Intervalo 95 % (alto)", model.intervalHigh, "transparent",
+         { borderWidth: 0, backgroundColor: css("--band-interval"), fill: "+1", order: 5 }),
+    line("Intervalo 95 % (bajo)", model.intervalLow, "transparent", { borderWidth: 0, order: 5 }),
     line(`Envolvente +${bandPercent} %`, model.envelopeHigh, "transparent",
          { borderWidth: 0, backgroundColor: css("--band-envelope"), fill: "+1", order: 4 }),
     line(`Envolvente −${bandPercent} %`, model.envelopeLow, "transparent", { borderWidth: 0, order: 4 }),
@@ -703,14 +720,14 @@ function renderStats(model, optimal, chosenLag, rows, key) {
   const stale = stalenessDays(key, state.meta);
   const horizon = chosenLag - stale;
 
-  const quality = strength(optimal.correlation);
+  const quality = strength(optimal.correlation, optimal.n);
   const intervalSpan = (Math.exp(Z95 * model.fit.sigma) - 1) * 100;
 
   const cards = [
     { k: "Relación", v: quality.word,
       n: `r = ${optimal.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días` },
     { k: "Desfase óptimo", v: `${optimal.lag} d`,
-      n: `medido sobre ${optimal.n.toLocaleString("es-ES")} días` },
+      n: `${optimal.n.toLocaleString("es-ES")} días · ~${Math.round(quality.effective)} muestras independientes` },
     { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
     { k: "BTC implícito hoy", v: impliedToday ? usd(impliedToday.y) : "—",
       n: Number.isFinite(gap) ? `el real está un ${gap >= 0 ? "+" : ""}${gap.toFixed(1)} % por encima` : "" },
@@ -728,17 +745,36 @@ function renderStats(model, optimal, chosenLag, rows, key) {
     </div>`).join("");
 
   const verdict = document.getElementById("verdict");
-  if (quality.weak) {
-    verdict.hidden = false;
-    verdict.innerHTML = `<strong>La relación que mide esta página es ${quality.word}.</strong>
+  const warnings = [];
+
+  if (quality.thin) {
+    warnings.push(`<strong>Muestra insuficiente: este resultado no es fiable.</strong>
+      El desfase de ${chosenLag} días deja ${optimal.n} días de solape, y como las variaciones
+      a ${CHANGE_WINDOW} días se pisan unas a otras eso son sólo unas
+      ${Math.round(quality.effective)} observaciones independientes. Con tan pocas, elegir el
+      mejor de 181 desfases encuentra correlaciones altísimas por puro azar. Amplía el rango.`);
+  } else if (quality.weak) {
+    warnings.push(`<strong>La relación que mide esta página es ${quality.word}.</strong>
       Con r = ${optimal.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días, la
       liquidez explica muy poco del movimiento de BTC en este rango, y el intervalo de
       predicción al 95 % abarca ±${Math.round(intervalSpan)} %: el precio implícito no es una
-      previsión utilizable. El gráfico sigue siendo válido para ver la forma de las dos series,
-      no para decidir nada. Prueba otra serie o un rango distinto y observa si la correlación mejora.`;
-  } else {
-    verdict.hidden = true;
+      previsión utilizable. El gráfico sirve para ver la forma de las dos series, no para
+      decidir nada.`);
   }
+
+  // Una elasticidad negativa dice que más liquidez implica menos BTC, o sea lo
+  // contrario de la tesis. Casi siempre es ruido ajustado, y voltea la curva
+  // implícita: hay que decirlo, no dejar que el gráfico lo insinúe en silencio.
+  if (model.fit.slope < 0) {
+    warnings.push(`<strong>El ajuste ha salido invertido (elasticidad
+      ${model.fit.slope.toFixed(2)}).</strong> Está diciendo que más liquidez implica
+      <em>menos</em> Bitcoin, lo contrario de la tesis que el gráfico quiere comprobar. La curva
+      implícita aparece por tanto reflejada respecto a la liquidez. En un rango corto esto es
+      casi siempre ruido ajustado, no un hallazgo.`);
+  }
+
+  verdict.hidden = warnings.length === 0;
+  verdict.innerHTML = warnings.join("<br><br>");
 
   const note = document.getElementById("horizonNote");
   if (horizon <= 0) {
@@ -798,10 +834,16 @@ function selectedRows() {
 function render() {
   const key = document.getElementById("series").value;
   const rows = selectedRows();
-  if (rows.length < CHANGE_WINDOW + MAX_LAG + 10) {
+  if (maxEvaluableLag(rows.length) < 0) {
+    const needed = CHANGE_WINDOW + MIN_SAMPLES;
     document.getElementById("status").hidden = false;
-    document.getElementById("status").textContent =
-      `El rango seleccionado tiene ${rows.length} días; hacen falta al menos ${CHANGE_WINDOW + MAX_LAG + 10} para buscar el desfase.`;
+    document.getElementById("status").innerHTML =
+      `<strong>El rango seleccionado es demasiado corto.</strong> Tiene ${rows.length} días y hacen
+       falta al menos ${needed} para medir un solo desfase con sentido. Las variaciones a
+       ${CHANGE_WINDOW} días se solapan entre sí, así que ${rows.length} días no son
+       ${rows.length} observaciones independientes sino unas
+       ${Math.max(1, Math.round(rows.length / CHANGE_WINDOW))}. Con tan pocas, buscar entre 181
+       desfases encuentra siempre una correlación altísima que es puro ruido. Amplía el rango.`;
     document.getElementById("app").hidden = true;
     return;
   }
@@ -811,9 +853,12 @@ function render() {
   const logPrice = rows.map((r) => Math.log(r.close_usd));
   const logLiquidity = rows.map((r) => Math.log(r[key]));
   const optimal = bestLag(lagCorrelations(logPrice, logLiquidity));
+  if (!optimal) return;
 
   const lagInput = document.getElementById("lag");
+  lagInput.max = String(maxEvaluableLag(rows.length));
   if (!state.lagTouched) lagInput.value = optimal.lag;
+  if (Number(lagInput.value) > Number(lagInput.max)) lagInput.value = lagInput.max;
   const chosenLag = Number(lagInput.value);
   const bandPercent = Number(document.getElementById("band").value);
 
@@ -859,16 +904,6 @@ function wireControls() {
     render();
   });
 
-  // La banda de predicción puede ser muy ancha y aplastar las dos curvas. Se
-  // puede ocultar para leerlas, pero arranca visible: esconder la incertidumbre
-  // por defecto haría que el ajuste pareciese más fiable de lo que es.
-  const intervalButton = document.getElementById("showInterval");
-  intervalButton.addEventListener("click", () => {
-    state.showInterval = !state.showInterval;
-    intervalButton.setAttribute("aria-pressed", String(state.showInterval));
-    intervalButton.textContent = state.showInterval ? "Visible" : "Oculto";
-    render();
-  });
 }
 
 async function main() {
