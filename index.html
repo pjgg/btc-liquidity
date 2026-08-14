@@ -125,7 +125,6 @@
   .swatch.block { height: 12px; border-radius: 3px; }
 
   .plot { position: relative; height: 400px; }
-  .plot.short { height: 240px; }
 
   table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
   th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--gridline); }
@@ -246,27 +245,6 @@
   </div>
 
   <div class="card">
-    <h2>Cómo se elige el desfase</h2>
-    <p class="sub">
-      Correlación entre la variación logarítmica a 30 días de BTC y la de la liquidez, para
-      cada desfase entre 0 y 180 días. Se usan variaciones y no niveles: dos series que suben
-      correlacionan casi al 0,9 sin tener relación alguna, así que un ajuste sobre niveles
-      devolvería un desfase sin significado.
-    </p>
-    <div class="plot short"><canvas id="lagChart"></canvas></div>
-  </div>
-
-  <div class="card">
-    <h2>La serie de liquidez</h2>
-    <p class="sub">
-      En su propia escala y su propio gráfico. No se superpone al precio en un segundo eje Y:
-      la alineación entre dos escalas distintas es arbitraria e inventa una correlación visual
-      que no está en los datos.
-    </p>
-    <div class="plot short"><canvas id="liquidityChart"></canvas></div>
-  </div>
-
-  <div class="card">
     <h2>Frescura de los datos</h2>
     <p class="sub">
       Última observación real de cada fuente. Entre publicaciones el valor anterior se arrastra
@@ -323,7 +301,7 @@ const LABELS = {
 };
 
 const state = { rows: [], meta: null, lagTouched: false, logScale: true, showInterval: true };
-let mainChart, lagChart, liquidityChart;
+let mainChart;
 
 /* ---------- carga ---------- */
 
@@ -594,88 +572,6 @@ function renderMain(model, bandPercent) {
   mainChart = new Chart(canvas, config);
 }
 
-function renderLagChart(correlations, chosenLag, optimalLag) {
-  const yAxis = axisDefaults();
-  yAxis.ticks.callback = (v) => v.toFixed(2);
-
-  const xAxis = axisDefaults();
-  xAxis.type = "linear";
-  xAxis.grid.display = false;
-  xAxis.ticks.callback = (v) => `${v} d`;
-
-  const points = correlations.map((c) => ({ x: c.lag, y: c.correlation }));
-  const marker = (lag, color, label) => ({
-    label,
-    data: correlations.filter((c) => c.lag === lag).map((c) => ({ x: c.lag, y: c.correlation })),
-    borderColor: color, backgroundColor: color,
-    pointRadius: 5, pointHoverRadius: 7, borderWidth: 2, showLine: false,
-  });
-
-  const config = {
-    type: "line",
-    data: {
-      datasets: [
-        line("Correlación", points, css("--series-btc"), { order: 3 }),
-        marker(optimalLag, css("--series-implied"), "Óptimo"),
-        marker(chosenLag, css("--text-primary"), "Seleccionado"),
-      ],
-    },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false,
-      interaction: { mode: "index", intersect: false, axis: "x" },
-      scales: { x: xAxis, y: yAxis },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: css("--surface-1"), titleColor: css("--text-primary"),
-          bodyColor: css("--text-secondary"), borderColor: css("--border"), borderWidth: 1,
-          padding: 11,
-          callbacks: {
-            title: (items) => `Desfase de ${items[0].parsed.x} días`,
-            label: (item) => ` ${item.dataset.label}: ${item.parsed.y.toFixed(3)}`,
-          },
-        },
-      },
-    },
-  };
-
-  if (lagChart) lagChart.destroy();
-  lagChart = new Chart(document.getElementById("lagChart"), config);
-}
-
-function renderLiquidityChart(rows, key) {
-  const yAxis = axisDefaults();
-  yAxis.ticks.callback = (v) => trillions(v);
-
-  const data = rows.map((r) => ({ x: Date.parse(`${r.date}T00:00:00Z`), y: r[key] }));
-
-  const config = {
-    type: "line",
-    data: { datasets: [line(LABELS[key], data, css("--series-implied"))] },
-    options: {
-      responsive: true, maintainAspectRatio: false, animation: false, normalized: true,
-      interaction: { mode: "index", intersect: false, axis: "x" },
-      scales: { x: { ...timeAxis("year"), min: data[0].x }, y: yAxis },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: css("--surface-1"), titleColor: css("--text-primary"),
-          bodyColor: css("--text-secondary"), borderColor: css("--border"), borderWidth: 1,
-          padding: 11,
-          callbacks: {
-            title: (items) => new Date(items[0].parsed.x)
-              .toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }),
-            label: (item) => ` ${item.dataset.label}: ${trillions(item.parsed.y)}`,
-          },
-        },
-      },
-    },
-  };
-
-  if (liquidityChart) liquidityChart.destroy();
-  liquidityChart = new Chart(document.getElementById("liquidityChart"), config);
-}
-
 function renderStats(model, optimal, chosenLag, rows, key) {
   const latest = rows[rows.length - 1];
   const impliedToday = model.implied[model.implied.length - 1 - chosenLag];
@@ -806,8 +702,6 @@ function render() {
 
   renderStats(model, optimal, chosenLag, rows, key);
   renderMain(model, bandPercent);
-  renderLagChart(model.correlations, chosenLag, optimal.lag);
-  renderLiquidityChart(rows, key);
   renderFreshness();
   renderTable(rows, key, model, chosenLag);
 }
