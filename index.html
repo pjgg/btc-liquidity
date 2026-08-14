@@ -540,10 +540,11 @@ function standardDeviation(values) {
 function buildSeries(rows, key, lag) {
   if (rows.length <= lag) return null;
 
-  const btc = [], liquidity = [];
   const baseBTC = rows[lag].close_usd;
   const baseLiquidity = rows[0][key];
 
+  // La amplitud se calibra sobre el tramo donde ambas series existen, para que el
+  // factor no dependa de cuánto se extienda la liquidez hacia la derecha.
   const logBTC = [], logLiquidity = [];
   for (let i = lag; i < rows.length; i++) {
     logBTC.push(Math.log(rows[i].close_usd / baseBTC));
@@ -555,18 +556,40 @@ function buildSeries(rows, key, lag) {
   const factor = spreadLiquidity > 0 ? spreadBTC / spreadLiquidity : 1;
   const meanLiquidity = logLiquidity.reduce((a, b) => a + b, 0) / logLiquidity.length;
 
-  for (let i = lag; i < rows.length; i++) {
-    const j = i - lag;
-    const x = Date.parse(`${rows[i].date}T00:00:00Z`);
-    btc.push({ x, y: Math.exp(logBTC[j]) * 100, real: usd(rows[i].close_usd) });
+  const btc = [], liquidity = [];
+  const lastDate = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
 
-    const stretched = meanLiquidity + (logLiquidity[j] - meanLiquidity) * factor;
+  // La liquidez se dibuja `lag` días más allá del último precio. Ahí está lo que
+  // significa ir por delante: esos puntos son liquidez YA observada, la de hace
+  // `lag` días, colocada sobre las fechas que aún no han llegado. Recortarla al
+  // rango del precio hacía que ambas curvas acabasen el mismo día y escondía
+  // justo el tramo que da su sentido al desfase.
+  for (let i = lag; i < rows.length + lag; i++) {
+    const j = i - lag;
+    const x = i < rows.length
+      ? Date.parse(`${rows[i].date}T00:00:00Z`)
+      : lastDate + (i - rows.length + 1) * DAY_MS;
+
+    if (i < rows.length) {
+      btc.push({ x, y: Math.exp(logBTC[j]) * 100, real: usd(rows[i].close_usd) });
+    }
+
+    const logValue = Math.log(rows[j][key] / baseLiquidity);
+    const stretched = meanLiquidity + (logValue - meanLiquidity) * factor;
     liquidity.push({ x, y: Math.exp(stretched) * 100, real: trillions(rows[j][key]) });
   }
-  return { btc, liquidity, factor };
+  return { btc, liquidity, factor, lastDate };
 }
 
 function renderChart(series, key, lag) {
+  // Discontinuo a la derecha de hoy: sigue siendo dato observado, pero cae sobre
+  // fechas que no han llegado, y conviene que se distinga de un simple vistazo.
+  const dashBeyondToday = {
+    segment: {
+      borderDash: (ctx) => ctx.p0.parsed.x >= series.lastDate ? [5, 4] : undefined,
+    },
+  };
+
   const yAxis = axisDefaults();
   yAxis.type = "linear";
   yAxis.ticks.callback = (v) => Math.round(v);
@@ -575,7 +598,8 @@ function renderChart(series, key, lag) {
     type: "line",
     data: {
       datasets: [
-        line(`${byKey.get(key).label}, ${days(lag)} antes`, series.liquidity, css("--series-liquidity"), 2),
+        { ...line(`${byKey.get(key).label}, ${days(lag)} antes`, series.liquidity, css("--series-liquidity"), 2),
+          ...dashBeyondToday },
         line("BTC real", series.btc, css("--series-btc"), 1),
       ],
     },
