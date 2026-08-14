@@ -28,6 +28,9 @@ func baseInputs() Inputs {
 		USDPerEUR: map[time.Time]float64{day(2026, time.August, 5): 1.1559},
 		YenPerUSD: map[time.Time]float64{day(2026, time.August, 1): 157.54},
 
+		PBoCAssets: map[time.Time]float64{day(2024, time.December, 31): 440_513.312973013},
+		YuanPerUSD: map[time.Time]float64{day(2024, time.December, 31): 6.7474},
+
 		Reserves:       map[time.Time]float64{day(2026, time.August, 5): 2_944_059},
 		Repo:           map[time.Time]float64{day(2026, time.August, 5): 0.002},
 		DiscountWindow: map[time.Time]float64{day(2026, time.August, 5): 5_644},
@@ -81,7 +84,14 @@ func TestBuildProducesDerivedSeries(t *testing.T) {
 	closeTo(t, row.ECBAssetsMUSD, 6_846_422.2857)
 	closeTo(t, row.BoJAssetsMUSD, 4_089_727.6882)
 	closeTo(t, row.FedNetLiqMUSD, 5_795_280.0)
-	closeTo(t, row.GlobalCBMUSD, 17_696_104.9739)
+	closeTo(t, row.PBoCAssetsMUSD, 6_528_637.8898)
+	closeTo(t, row.GlobalCBMUSD, 24_224_742.8637)
+
+	// El agregado que citan estos gráficos ronda los 24 billones de dólares. Sin
+	// China salía en 17,7 y no era comparable.
+	if row.GlobalCBMUSD < 20e6 || row.GlobalCBMUSD > 28e6 {
+		t.Errorf("agregado global %.0f MUSD fuera de la banda esperada 20-28 billones", row.GlobalCBMUSD)
+	}
 }
 
 // The spec requires each balance sheet to be converted at the FX rate of its
@@ -164,5 +174,38 @@ func TestBuildReturnsRowsInDateOrder(t *testing.T) {
 		if !rows[i].Date.After(rows[i-1].Date) {
 			t.Fatalf("rows out of order at %d: %v then %v", i, rows[i-1].Date, rows[i].Date)
 		}
+	}
+}
+
+// Los balances anuales del PBoC llevan fecha 31 de diciembre, y 2022 y 2023
+// cayeron en fin de semana, cuando FRED no publica tipo de cambio. Exigir el tipo
+// de ese día exacto tiraba la observación entera. Lo mismo le pasaba a los datos
+// mensuales del BoJ cuando el día 1 caía en festivo.
+func TestConversionUsesLatestRateAtOrBeforeTheObservation(t *testing.T) {
+	inputs := baseInputs()
+	// 2026-08-02 es domingo: no hay tipo publicado ese día.
+	inputs.BoJAssets = map[time.Time]float64{day(2026, time.August, 2): 6_442_957}
+	inputs.YenPerUSD = map[time.Time]float64{
+		day(2026, time.July, 31):  157.54, // viernes anterior
+		day(2026, time.August, 3): 200.00, // lunes siguiente, no debe usarse
+	}
+
+	rows := Build(inputs, day(2026, time.August, 5), day(2026, time.August, 5))
+	if len(rows) != 1 {
+		t.Fatalf("una observación en fin de semana debe convertirse con el tipo anterior, got %d filas", len(rows))
+	}
+	// Debe usar 157.54 (el viernes previo), no 200.00 (el lunes posterior).
+	closeTo(t, rows[0].BoJAssetsMUSD, 6_442_957.0*100/157.54)
+}
+
+func TestConversionStillDropsObservationsWithNoEarlierRate(t *testing.T) {
+	inputs := baseInputs()
+	inputs.PBoCAssets = map[time.Time]float64{day(2024, time.December, 31): 440_513.312973013}
+	// El único tipo disponible es posterior a la observación: no sirve.
+	inputs.YuanPerUSD = map[time.Time]float64{day(2026, time.August, 7): 6.7474}
+
+	rows := Build(inputs, day(2026, time.August, 5), day(2026, time.August, 5))
+	if len(rows) != 0 {
+		t.Errorf("sin ningún tipo anterior a la observación la fila debe caer, got %d", len(rows))
 	}
 }

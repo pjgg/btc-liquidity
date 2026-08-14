@@ -123,3 +123,68 @@ func TestParseBinanceKlinesEmptyArray(t *testing.T) {
 		t.Errorf("expected no closes, got %d", len(closes))
 	}
 }
+
+// DBnomics devuelve los valores en un array de tipos mezclados: números reales y
+// la cadena "NA" para los periodos sin dato. Un parser que confíe en el tipo
+// falla, y uno que fuerce la conversión mete un cero donde no hay dato.
+func TestParseDBnomicsSeries(t *testing.T) {
+	// Recorte real de NBS/A_A0L05/A0L0501 (activos totales del PBoC), donde el
+	// último periodo viene como "NA".
+	input := []byte(`{"series":{"docs":[{
+	  "series_code":"A0L0501","series_name":"Total Assets",
+	  "dimensions":{"freq":"A","unit":"100_million_yuan"},
+	  "period":["2023","2024","2025"],
+	  "value":[456944.136477551,440513.312973013,"NA"]
+	}]}}`)
+
+	series, err := ParseDBnomicsSeries(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(series.Values) != 2 {
+		t.Fatalf(`expected the "NA" period to be dropped, got %d values`, len(series.Values))
+	}
+	// An annual balance sheet is a year-end figure, so it lands on 31 December.
+	if got := series.Values[day(2024, time.December, 31)]; got != 440513.312973013 {
+		t.Errorf("2024 = %v, want 440513.312973013", got)
+	}
+	if _, present := series.Values[day(2025, time.December, 31)]; present {
+		t.Error(`the "NA" period must be absent, not stored as zero`)
+	}
+	if !series.Last.Equal(day(2024, time.December, 31)) {
+		t.Errorf("Last = %v, want 2024-12-31", series.Last)
+	}
+}
+
+func TestParseDBnomicsMonthlyAndDailyPeriods(t *testing.T) {
+	input := []byte(`{"series":{"docs":[{
+	  "period":["2026-06","2026-07-15"],
+	  "value":[1.0,2.0]
+	}]}}`)
+
+	series, err := ParseDBnomicsSeries(input)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// A monthly period is a month-end figure for the same reason as the annual one.
+	if got := series.Values[day(2026, time.June, 30)]; got != 1.0 {
+		t.Errorf("2026-06 should map to 2026-06-30, got %v", got)
+	}
+	if got := series.Values[day(2026, time.July, 15)]; got != 2.0 {
+		t.Errorf("2026-07-15 = %v, want 2", got)
+	}
+}
+
+func TestParseDBnomicsRejectsEmptyPayload(t *testing.T) {
+	if _, err := ParseDBnomicsSeries([]byte(`{"series":{"docs":[]}}`)); err == nil {
+		t.Error("a response with no series must be an error")
+	}
+}
+
+func TestParseDBnomicsRejectsAllMissing(t *testing.T) {
+	input := []byte(`{"series":{"docs":[{"period":["2025"],"value":["NA"]}]}}`)
+	if _, err := ParseDBnomicsSeries(input); err == nil {
+		t.Error("a series where every value is NA must be an error, not an empty success")
+	}
+}

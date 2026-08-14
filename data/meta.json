@@ -1,15 +1,17 @@
 {
-  "generated_at_utc": "2026-08-14T11:16:30Z",
+  "generated_at_utc": "2026-08-14T11:48:50Z",
   "rows": {
     "btc": 3148,
     "liquidity": 3148
   },
   "last_observation": {
     "BTCUSDT": "2026-08-14",
+    "DEXCHUS": "2026-08-07",
     "DEXJPUS": "2026-08-07",
     "DEXUSEU": "2026-08-07",
     "ECBASSETSW": "2026-08-07",
     "JPNASSETS": "2026-07-01",
+    "PBOC_ASSETS": "2024-12-31",
     "RPONTSYD": "2026-08-13",
     "RRPONTSYD": "2026-08-13",
     "WALCL": "2026-08-12",
@@ -19,7 +21,8 @@
   },
   "notes": [
     "All liquidity figures are in millions of USD.",
-    "China is excluded from global_cb_musd: no PBoC series is published on FRED.",
+    "global_cb_musd = Fed + ECB + BoJ + PBoC, all converted to millions of USD.",
+    "The PBoC component is annual and lags by over a year, so it holds flat between steps.",
     "Liquidity series are forward-filled between publications; they are stock variables."
   ]
 }

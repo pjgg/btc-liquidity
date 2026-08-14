@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	DefaultFREDBaseURL    = "https://fred.stlouisfed.org/graph/fredgraph.csv"
-	DefaultBinanceBaseURL = "https://api.binance.com/api/v3/klines"
+	DefaultFREDBaseURL     = "https://fred.stlouisfed.org/graph/fredgraph.csv"
+	DefaultBinanceBaseURL  = "https://api.binance.com/api/v3/klines"
+	DefaultDBnomicsBaseURL = "https://api.db.nomics.world/v22/series"
 
 	// Binance caps a klines page at 1000 candles.
 	binancePageLimit = 1000
@@ -28,16 +29,18 @@ const (
 // Client fetches the upstream feeds. Both base URLs are fields so tests can
 // point them at a local server.
 type Client struct {
-	HTTP           *http.Client
-	FREDBaseURL    string
-	BinanceBaseURL string
+	HTTP            *http.Client
+	FREDBaseURL     string
+	BinanceBaseURL  string
+	DBnomicsBaseURL string
 }
 
 func NewClient() *Client {
 	return &Client{
-		HTTP:           &http.Client{Timeout: 60 * time.Second},
-		FREDBaseURL:    DefaultFREDBaseURL,
-		BinanceBaseURL: DefaultBinanceBaseURL,
+		HTTP:            &http.Client{Timeout: 60 * time.Second},
+		FREDBaseURL:     DefaultFREDBaseURL,
+		BinanceBaseURL:  DefaultBinanceBaseURL,
+		DBnomicsBaseURL: DefaultDBnomicsBaseURL,
 	}
 }
 
@@ -55,6 +58,25 @@ func (c *Client) FetchFRED(ctx context.Context, seriesID string) (Series, error)
 		return Series{}, fmt.Errorf("parsing FRED series %s: %w", seriesID, err)
 	}
 	return series, nil
+}
+
+// FetchDBnomics downloads one series from DBnomics, which mirrors national
+// statistics offices that publish no usable API of their own. It is how the PBoC
+// balance sheet reaches this project.
+func (c *Client) FetchDBnomics(ctx context.Context, provider, dataset, series string) (Series, error) {
+	endpoint := fmt.Sprintf("%s/%s/%s/%s?observations=1",
+		c.DBnomicsBaseURL, url.PathEscape(provider), url.PathEscape(dataset), url.PathEscape(series))
+
+	body, err := c.get(ctx, endpoint)
+	if err != nil {
+		return Series{}, fmt.Errorf("fetching dbnomics %s/%s/%s: %w", provider, dataset, series, err)
+	}
+
+	parsed, err := ParseDBnomicsSeries(body)
+	if err != nil {
+		return Series{}, fmt.Errorf("parsing dbnomics %s/%s/%s: %w", provider, dataset, series, err)
+	}
+	return parsed, nil
 }
 
 // FetchBinanceDailyCloses walks forward from start in pages of 1000 candles.

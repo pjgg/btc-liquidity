@@ -121,3 +121,82 @@ func jsonNumber(raw json.RawMessage) (float64, error) {
 	}
 	return asFloat, nil
 }
+
+// ParseDBnomicsSeries reads a single series from the DBnomics API.
+//
+// DBnomics returns observations as two parallel arrays, and the value array has
+// mixed types: real numbers plus the string "NA" for periods with no data. Those
+// are dropped rather than coerced, so a missing year never becomes a zero balance
+// sheet.
+//
+// Periods arrive as "YYYY", "YYYY-MM" or "YYYY-MM-DD". The first two are stock
+// figures for the end of the period they name, so they map to the last day of that
+// year or month — dating an annual balance sheet to 1 January would shift it
+// twelve months earlier than it belongs.
+func ParseDBnomicsSeries(data []byte) (Series, error) {
+	var payload struct {
+		Series struct {
+			Docs []struct {
+				Period []string          `json:"period"`
+				Value  []json.RawMessage `json:"value"`
+			} `json:"docs"`
+		} `json:"series"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return Series{}, fmt.Errorf("decoding dbnomics response: %w", err)
+	}
+	if len(payload.Series.Docs) == 0 {
+		return Series{}, errors.New("dbnomics response contained no series")
+	}
+
+	doc := payload.Series.Docs[0]
+	if len(doc.Period) != len(doc.Value) {
+		return Series{}, fmt.Errorf(
+			"dbnomics returned %d periods for %d values", len(doc.Period), len(doc.Value))
+	}
+
+	series := Series{Values: make(map[time.Time]float64, len(doc.Period))}
+	for i, period := range doc.Period {
+		var value float64
+		if err := json.Unmarshal(doc.Value[i], &value); err != nil {
+			continue // "NA" or any other non-numeric marker: no observation
+		}
+
+		date, err := parseDBnomicsPeriod(period)
+		if err != nil {
+			return Series{}, err
+		}
+
+		series.Values[date] = value
+		if date.After(series.Last) {
+			series.Last = date
+		}
+	}
+
+	if len(series.Values) == 0 {
+		return Series{}, errors.New("dbnomics series contained no usable observations")
+	}
+	return series, nil
+}
+
+func parseDBnomicsPeriod(period string) (time.Time, error) {
+	switch len(period) {
+	case len("YYYY"):
+		year, err := strconv.Atoi(period)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("bad annual period %q: %w", period, err)
+		}
+		return time.Date(year, time.December, 31, 0, 0, 0, 0, time.UTC), nil
+
+	case len("YYYY-MM"):
+		month, err := time.ParseInLocation("2006-01", period, time.UTC)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("bad monthly period %q: %w", period, err)
+		}
+		return month.AddDate(0, 1, -1), nil
+
+	case len("YYYY-MM-DD"):
+		return time.ParseInLocation(time.DateOnly, period, time.UTC)
+	}
+	return time.Time{}, fmt.Errorf("unrecognised dbnomics period %q", period)
+}

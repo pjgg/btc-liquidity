@@ -34,10 +34,10 @@ func TestECBToMUSD(t *testing.T) {
 	closeTo(t, ECBToMUSD(5_923_023.0, 1.1559), 6_846_422.2857, 0.01)
 }
 
-func TestBoJToMUSD(t *testing.T) {
+func TestHundredMillionLocalToMUSD(t *testing.T) {
 	// JPNASSETS 2026-07-01 = 6_442_957 (100M yen) => 644.3 trillion yen.
 	// At DEXJPUS = 157.54 yen/USD that is ~4.09 trillion USD.
-	got := BoJToMUSD(6_442_957.0, 157.54)
+	got := HundredMillionLocalToMUSD(6_442_957.0, 157.54)
 	closeTo(t, got, 4_089_727.6882, 0.01)
 
 	// Sanity: the BoJ balance sheet is trillions of dollars, not billions.
@@ -55,12 +55,12 @@ func TestECBConversionUsesRateNotReciprocal(t *testing.T) {
 	}
 }
 
-func TestBoJConversionUsesReciprocal(t *testing.T) {
+func TestHundredMillionConversionUsesReciprocal(t *testing.T) {
 	// DEXJPUS is YEN per USD, so a weaker yen (more yen per dollar) means fewer
 	// dollars. This runs opposite to the euro conversion and is the easiest of
 	// the five to invert by accident.
-	strongYen := BoJToMUSD(1000.0, 100.0)
-	weakYen := BoJToMUSD(1000.0, 200.0)
+	strongYen := HundredMillionLocalToMUSD(1000.0, 100.0)
+	weakYen := HundredMillionLocalToMUSD(1000.0, 200.0)
 	if weakYen >= strongYen {
 		t.Errorf("a weaker yen must convert to fewer dollars: %.2f vs %.2f", weakYen, strongYen)
 	}
@@ -82,8 +82,15 @@ func TestFedNetLiquidityFallsWhenTGARises(t *testing.T) {
 
 func TestGlobalCBBalance(t *testing.T) {
 	walcl := 6_759_955.0
-	got := GlobalCBBalance(walcl, 6_846_422.2857, 4_089_727.6882)
-	closeTo(t, got, 17_696_104.9739, 0.01)
+	// PBoC 2024 = 440_513.312973013 (100M yuan) at DEXCHUS 6.7474 -> 6_528_614 MUSD.
+	got := GlobalCBBalance(walcl, 6_846_422.2857, 4_089_727.6882, 6528637.8898)
+	closeTo(t, got, 24224742.8637, 0.01)
+
+	// The published figure these charts quote is around 24 trillion USD; without
+	// China this came out near 17.7 and was not comparable.
+	if got < 20e6 || got > 28e6 {
+		t.Errorf("global aggregate %.0f MUSD is outside the expected 20-28 trillion band", got)
+	}
 
 	if got <= walcl {
 		t.Errorf("the global aggregate must exceed the Fed alone: %.2f vs %.2f", got, walcl)

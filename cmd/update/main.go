@@ -23,11 +23,22 @@ import (
 
 const btcSymbol = "BTCUSDT"
 
+// The PBoC balance sheet, mirrored from China's National Bureau of Statistics.
+// FRED carries no PBoC series and every international M2 series there is
+// discontinued, so this is the only keyless route to it. Annual, in hundreds of
+// millions of yuan, and published well after the year it covers.
+const (
+	pbocProvider = "NBS"
+	pbocDataset  = "A_A0L05"
+	pbocSeries   = "A0L0501"
+)
+
 var (
 	btcHeader       = []string{"date", "close_usd"}
 	liquidityHeader = []string{
 		"date",
 		"walcl_musd", "wtregen_musd", "rrp_musd", "ecb_assets_musd", "boj_assets_musd",
+		"pboc_assets_musd",
 		"reserves_musd", "repo_musd", "discount_window_musd",
 		"fed_net_liq_musd", "global_cb_musd",
 	}
@@ -47,6 +58,7 @@ var fredSeries = []struct{ id, frequency string }{
 	{"JPNASSETS", "monthly"},
 	{"DEXUSEU", "weekly"},
 	{"DEXJPUS", "weekly"},
+	{"DEXCHUS", "weekly"},
 
 	// Whether liquidity is being injected or drained. RPONTSYD is the repo the
 	// Fed lends into the system; RRPONTSYD above is its opposite. One letter
@@ -99,6 +111,16 @@ func run(dataDir, startFlag string) error {
 		log.Printf("%-11s %5d observations, last %s", series.id, len(s.Values), lastObservation[series.id])
 	}
 
+	pboc, err := client.FetchDBnomics(ctx, pbocProvider, pbocDataset, pbocSeries)
+	if err != nil {
+		return err
+	}
+	if err := liquidity.CheckFreshness("PBOC_ASSETS", pboc.Last, "annual", today); err != nil {
+		return err
+	}
+	lastObservation["PBOC_ASSETS"] = pboc.Last.Format(time.DateOnly)
+	log.Printf("%-11s %5d observations, last %s (anual)", "PBOC", len(pboc.Values), lastObservation["PBOC_ASSETS"])
+
 	closes, err := client.FetchBinanceDailyCloses(ctx, btcSymbol, start)
 	if err != nil {
 		return err
@@ -109,13 +131,15 @@ func run(dataDir, startFlag string) error {
 	log.Printf("%-11s %5d daily closes", btcSymbol, len(closes))
 
 	rows := pipeline.Build(pipeline.Inputs{
-		WALCL:     fetched["WALCL"].Values,
-		WTREGEN:   fetched["WTREGEN"].Values,
-		RRP:       fetched["RRPONTSYD"].Values,
-		ECBAssets: fetched["ECBASSETSW"].Values,
-		BoJAssets: fetched["JPNASSETS"].Values,
-		USDPerEUR: fetched["DEXUSEU"].Values,
-		YenPerUSD: fetched["DEXJPUS"].Values,
+		WALCL:      fetched["WALCL"].Values,
+		WTREGEN:    fetched["WTREGEN"].Values,
+		RRP:        fetched["RRPONTSYD"].Values,
+		ECBAssets:  fetched["ECBASSETSW"].Values,
+		BoJAssets:  fetched["JPNASSETS"].Values,
+		PBoCAssets: pboc.Values,
+		USDPerEUR:  fetched["DEXUSEU"].Values,
+		YenPerUSD:  fetched["DEXJPUS"].Values,
+		YuanPerUSD: fetched["DEXCHUS"].Values,
 
 		Reserves:       fetched["WRESBAL"].Values,
 		Repo:           fetched["RPONTSYD"].Values,
@@ -149,6 +173,7 @@ func run(dataDir, startFlag string) error {
 			money(row.RRPMUSD),
 			money(row.ECBAssetsMUSD),
 			money(row.BoJAssetsMUSD),
+			money(row.PBoCAssetsMUSD),
 			money(row.ReservesMUSD),
 			money(row.RepoMUSD),
 			money(row.DiscountWindowMUSD),
@@ -170,7 +195,8 @@ func run(dataDir, startFlag string) error {
 		LastObservation: lastObservation,
 		Notes: []string{
 			"All liquidity figures are in millions of USD.",
-			"China is excluded from global_cb_musd: no PBoC series is published on FRED.",
+			"global_cb_musd = Fed + ECB + BoJ + PBoC, all converted to millions of USD.",
+			"The PBoC component is annual and lags by over a year, so it holds flat between steps.",
 			"Liquidity series are forward-filled between publications; they are stock variables.",
 		},
 	}

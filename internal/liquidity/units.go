@@ -12,6 +12,7 @@
 //	RRPONTSYD   Billions of U.S. Dollars
 //	ECBASSETSW  Millions of Euros
 //	JPNASSETS   100 Million Yen
+//	NBS PBoC    100 Million Yuan (anual)
 //	DEXUSEU     U.S. Dollars to One Euro
 //	DEXJPUS     Japanese Yen to One U.S. Dollar
 package liquidity
@@ -33,6 +34,9 @@ var stalenessLimitDays = map[string]int{
 	"daily":   10,
 	"weekly":  30,
 	"monthly": 120,
+	// The PBoC balance sheet is annual and published well after the year it
+	// covers, so a year and a half of age is normal rather than a fault.
+	"annual": 800,
 }
 
 // BillionsToMUSD rescales a series published in billions.
@@ -51,13 +55,16 @@ func ECBToMUSD(millionsEUR, usdPerEUR float64) float64 {
 	return millionsEUR * usdPerEUR
 }
 
-// BoJToMUSD converts the Bank of Japan balance sheet from hundreds of millions
-// of yen to millions of dollars.
+// HundredMillionLocalToMUSD converts a balance sheet published in hundreds of
+// millions of local currency into millions of dollars.
 //
-// DEXJPUS quotes yen per dollar, so the rate divides. This runs opposite to the
-// euro conversion and is the easiest of the five to invert by accident.
-func BoJToMUSD(hundredMillionYen, yenPerUSD float64) float64 {
-	return hundredMillionYen * 100.0 / yenPerUSD
+// Both the Bank of Japan (100 million yen) and the People's Bank of China
+// (100 million yuan) publish this way, and DEXJPUS and DEXCHUS both quote local
+// currency per dollar, so the rate divides. That runs opposite to the euro
+// conversion, where the rate multiplies, and is the easiest of these to invert
+// by accident.
+func HundredMillionLocalToMUSD(hundredMillionLocal, localPerUSD float64) float64 {
+	return hundredMillionLocal * 100.0 / localPerUSD
 }
 
 // FedNetLiquidity is the Fed balance sheet less the two large drains on it:
@@ -66,12 +73,16 @@ func FedNetLiquidity(walclMUSD, wtregenMUSD, rrpMUSD float64) float64 {
 	return walclMUSD - wtregenMUSD - rrpMUSD
 }
 
-// GlobalCBBalance sums the Fed, ECB and BoJ balance sheets in millions of USD.
+// GlobalCBBalance sums the Fed, ECB, BoJ and PBoC balance sheets in millions of
+// USD.
 //
-// China is absent: no PBoC series is published on FRED, and every international
-// M2 series tested during design was discontinued. The page states this.
-func GlobalCBBalance(walclMUSD, ecbAssetsMUSD, bojAssetsMUSD float64) float64 {
-	return walclMUSD + ecbAssetsMUSD + bojAssetsMUSD
+// The PBoC figure is annual and lags by over a year, which is why it was left out
+// at first. It is in now because without China the aggregate is not comparable to
+// the ~24 trillion figure these charts usually quote — China alone is around a
+// quarter of it. Its own contribution therefore moves once a year and holds flat
+// in between; the page reports each component's age so that is visible.
+func GlobalCBBalance(walclMUSD, ecbAssetsMUSD, bojAssetsMUSD, pbocAssetsMUSD float64) float64 {
+	return walclMUSD + ecbAssetsMUSD + bojAssetsMUSD + pbocAssetsMUSD
 }
 
 // CheckFreshness fails when a series has gone quiet for longer than its own
