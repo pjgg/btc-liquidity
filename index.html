@@ -192,10 +192,6 @@
           <span class="range-value" id="lagValue">7 días</span>
         </div>
       </div>
-      <div class="field">
-        <label for="fx">Divisa</label>
-        <button id="fx" aria-pressed="false" autocomplete="off">Fecha de observación</button>
-      </div>
     </div>
   </div>
 
@@ -286,8 +282,6 @@ const DEFAULT_LAG = 7;
 const SERIES = [
   { key: "global_cb_musd", label: "Liquidez global",
     option: "Liquidez global (Fed + BCE + BoJ + PBoC)",
-    // Misma serie convertida al último tipo de cambio en todo el histórico.
-    atLatestFX: "global_cb_fxnow_musd",
     components: ["WALCL", "ECBASSETSW", "JPNASSETS", "PBOC_ASSETS", "DEXUSEU", "DEXJPUS", "DEXCHUS"] },
   { key: "fed_net_liq_musd", label: "Fed Net Liquidity",
     option: "Fed Net Liquidity (balance − TGA − RRP)",
@@ -302,19 +296,12 @@ const SERIES = [
 
 const byKey = new Map(SERIES.map((s) => [s.key, s]));
 
-// Sólo el agregado global tiene dos versiones: las demás series ya están en
-// dólares de origen, así que la convención de divisa no las toca.
-function column(key) {
-  const alternative = byKey.get(key).atLatestFX;
-  return state.fxAtLatest && alternative ? alternative : key;
-}
-
 // Estos tres eran controles y ahora son fijos: eje lineal, amplitud de la liquidez
 // igualada a la del precio, y la serie global como punto de partida.
 const DEFAULT_SERIES = "global_cb_musd";
 const GUARD_WINDOW = 30;   // colchón mínimo de días que se exige al rango
 
-const state = { rows: [], meta: null, fxAtLatest: false };
+const state = { rows: [], meta: null };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -636,7 +623,7 @@ function renderChart(series, key, lag) {
 
 /* ---------- paneles ---------- */
 
-function renderStats(rows, key, col, lag, levelCorrelation, factor) {
+function renderStats(rows, key, lag, levelCorrelation, factor) {
   const latest = rows[rows.length - 1];
   const stale = stalenessDays(key);
 
@@ -644,7 +631,7 @@ function renderStats(rows, key, col, lag, levelCorrelation, factor) {
     { k: "Correlación de niveles",
       v: Number.isFinite(levelCorrelation) ? levelCorrelation.toFixed(3) : "—",
       n: `entre el precio y la liquidez de ${days(lag)} antes, en el rango seleccionado` },
-    { k: byKey.get(key).label, v: level(latest[col]),
+    { k: byKey.get(key).label, v: level(latest[key]),
       n: `dato real más antiguo: ${stale.culprit || "—"}, hace ${days(stale.days)}` },
     { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
     { k: "Desfase aplicado", v: days(lag),
@@ -743,7 +730,7 @@ function renderFreshness() {
     }).join("");
 }
 
-function renderTable(rows, key, col, lag, fit) {
+function renderTable(rows, key, lag, fit) {
   const head = `<thead><tr><th>Fecha</th><th>BTC real</th><th>BTC en base a la liquidez</th>
     <th>Diferencia</th><th>${byKey.get(key).label} (${lag} d antes)</th></tr></thead>`;
 
@@ -755,7 +742,7 @@ function renderTable(rows, key, col, lag, fit) {
   // el mismo ajuste que a todo lo demás.
   const lastDate = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
   for (let ahead = lag; ahead >= 1; ahead--) {
-    const source = rows[rows.length - 1 + ahead - lag][col];
+    const source = rows[rows.length - 1 + ahead - lag][key];
     const value = based(source);
     const date = new Date(lastDate + ahead * DAY_MS).toISOString().slice(0, 10);
 
@@ -770,7 +757,7 @@ function renderTable(rows, key, col, lag, fit) {
 
   const start = Math.max(lag, rows.length - 120);
   for (let i = rows.length - 1; i >= start; i--) {
-    const source = rows[i - lag][col];
+    const source = rows[i - lag][key];
     const value = based(source);
     const diff = value ? (rows[i].close_usd / value - 1) * 100 : NaN;
 
@@ -833,29 +820,20 @@ function render() {
   document.getElementById("legendLiquidity").textContent =
     `${byKey.get(key).label}, ${days(lag)} antes`;
 
-  const col = column(key);
-  const series = buildSeries(rows, col, lag);
+  const series = buildSeries(rows, key, lag);
   if (!series) return;
 
-  renderStats(rows, key, col, lag, levelCorrelationAtLag(rows, col, lag), series.factor);
+  renderStats(rows, key, lag, levelCorrelationAtLag(rows, key, lag), series.factor);
   renderChart(series, key, lag);
   renderFlows(rows);
   renderFreshness();
-  renderTable(rows, key, col, lag, fitLogLog(rows, col, lag));
+  renderTable(rows, key, lag, fitLogLog(rows, key, lag));
 }
 
 function wireControls() {
   for (const id of ["series", "from", "to", "lag"]) {
     document.getElementById(id).addEventListener("input", render);
   }
-
-  const fxButton = document.getElementById("fx");
-  fxButton.addEventListener("click", () => {
-    state.fxAtLatest = !state.fxAtLatest;
-    fxButton.setAttribute("aria-pressed", String(state.fxAtLatest));
-    fxButton.textContent = state.fxAtLatest ? "Tipo actual" : "Fecha de observación";
-    render();
-  });
 
 }
 
@@ -900,13 +878,6 @@ function applyURLParams() {
   set("desde", "from");
   set("hasta", "to");
   set("desfase", "lag");
-
-  if (params.get("divisa") === "actual") {
-    state.fxAtLatest = true;
-    const button = document.getElementById("fx");
-    button.setAttribute("aria-pressed", "true");
-    button.textContent = "Tipo actual";
-  }
 }
 
 main();
