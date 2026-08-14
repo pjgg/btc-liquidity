@@ -24,6 +24,19 @@ intervalo de predicción al 95 % abarca ±222 %, que es tanto como no predecir n
 Sigue siendo útil para ver la forma de ambas series y para comprobar la afirmación por uno
 mismo. No es una herramienta de decisión, y la página lo advierte.
 
+### Dos vistas del mismo dato
+
+El conmutador **Vista** alterna entre el precio implícito (liquidez convertida a dólares por
+bitcoin mediante el ajuste) y una vista **indexada a 100** que superpone ambas series desde el
+inicio del rango. `?vista=indexada` abre directamente en la segunda.
+
+La indexada existe para responder a los gráficos que circulan en vídeos, donde una línea de
+liquidez va superpuesta al eje de precios y parece anticipar cada giro. Ese efecto es del
+dibujo: la herramienta estira el símbolo superpuesto hasta llenar el panel, así que un
+movimiento real del 4-5 % se ve tan grande como uno del 40 % del precio. Con dos escalas
+independientes se puede alinear visualmente cualquier par de curvas. Indexando a una base
+común se ve la proporción de verdad — desde 2018 BTC hizo ×10 y la liquidez ×1,5.
+
 ## ¿Inyectan o drenan?
 
 La página incluye un panel que responde esto con los flujos de la Reserva Federal a 4, 13 y

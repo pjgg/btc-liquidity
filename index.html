@@ -119,6 +119,7 @@
   .stat .v { font-size: 25px; font-weight: 600; line-height: 1.1; letter-spacing: -0.015em; }
   .stat .n { font-size: 12px; color: var(--text-secondary); margin-top: 5px; }
 
+  .legend[hidden], .note[hidden] { display: none; }
   .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 14px; padding: 0; list-style: none; }
   .legend li { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
   .swatch { width: 22px; height: 3px; border-radius: 2px; flex: none; }
@@ -210,6 +211,10 @@
         </div>
       </div>
       <div class="field">
+        <label for="viewMode">Vista</label>
+        <button id="viewMode" aria-pressed="false">Precio implícito</button>
+      </div>
+      <div class="field">
         <label for="logScale">Eje Y</label>
         <button id="logScale" aria-pressed="true">Logarítmico</button>
       </div>
@@ -225,13 +230,17 @@
   <p class="verdict" id="verdict" hidden></p>
 
   <div class="card">
-    <h2>Precio real frente al implícito por liquidez</h2>
-    <p class="sub">
+    <h2 id="chartTitle">Precio real frente al implícito por liquidez</h2>
+    <p class="sub" id="chartSub">
       Ambas curvas están en dólares por bitcoin, sobre un único eje. La curva implícita sale
       de un ajuste log-log del precio sobre la liquidez desfasada; el tramo a la derecha de
       hoy es proyección, y se apoya en liquidez ya observada.
     </p>
-    <ul class="legend">
+    <ul class="legend" id="indexedLegend" hidden>
+      <li><span class="swatch" style="background:var(--series-btc)"></span> BTC real (base 100)</li>
+      <li><span class="swatch" style="background:var(--series-implied)"></span> Liquidez desfasada (base 100)</li>
+    </ul>
+    <ul class="legend" id="chartLegend">
       <li><span class="swatch" style="background:var(--series-btc)"></span> BTC real</li>
       <li><span class="swatch" style="background:var(--series-implied)"></span> BTC implícito por liquidez</li>
       <li><span class="swatch block" style="background:var(--band-envelope)"></span> Envolvente elegida <span id="legendBand">±5 %</span></li>
@@ -317,7 +326,7 @@ const LABELS = {
   global_cb_musd: "Balances globales",
 };
 
-const state = { rows: [], meta: null, lagTouched: false, logScale: true };
+const state = { rows: [], meta: null, lagTouched: false, logScale: true, indexed: false };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -480,7 +489,26 @@ function buildModel(rows, key, lag, bandPercent) {
     intervalLow.push({ x, y: value / intervalFactor });
   }
 
-  return { fit, correlations, actual, implied, envelopeHigh, envelopeLow, intervalHigh, intervalLow, lastDate };
+  // Vista indexada: ambas series a 100 en la primera fecha en que las dos existen.
+  // Es la forma honesta de superponerlas — un solo eje, sin alinear dos escalas
+  // arbitrarias — y deja ver que la liquidez se mueve mucho menos que el precio.
+  const actualIndexed = [], liquidityIndexed = [];
+  if (rows.length > lag) {
+    const baseBTC = rows[lag].close_usd;
+    const baseLiquidity = Math.exp(logLiquidity[0]);
+
+    for (let i = lag; i < rows.length + lag; i++) {
+      const x = i < rows.length
+        ? Date.parse(`${rows[i].date}T00:00:00Z`)
+        : lastDate + (i - rows.length + 1) * DAY_MS;
+
+      if (i < rows.length) actualIndexed.push({ x, y: (rows[i].close_usd / baseBTC) * 100 });
+      liquidityIndexed.push({ x, y: (Math.exp(logLiquidity[i - lag]) / baseLiquidity) * 100 });
+    }
+  }
+
+  return { fit, correlations, actual, implied, envelopeHigh, envelopeLow, intervalHigh, intervalLow,
+           actualIndexed, liquidityIndexed, lastDate };
 }
 
 function stalenessDays(key, meta) {
@@ -665,6 +693,9 @@ function line(label, data, color, extra = {}) {
 
 function renderMain(model, bandPercent) {
   const canvas = document.getElementById("mainChart");
+
+  if (state.indexed) return renderIndexed(model, canvas);
+
   const datasets = [];
 
   datasets.push(
@@ -703,6 +734,45 @@ function renderMain(model, bandPercent) {
             title: (items) => new Date(items[0].parsed.x)
               .toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }),
             label: (item) => ` ${item.dataset.label}: ${usd(item.parsed.y)}`,
+          },
+        },
+      },
+    },
+  };
+
+  if (mainChart) mainChart.destroy();
+  mainChart = new Chart(canvas, config);
+}
+
+// Ambas series a base 100. Sin bandas: la envolvente y el intervalo describen el
+// precio implícito, que aquí no se dibuja.
+function renderIndexed(model, canvas) {
+  const yAxis = axisDefaults();
+  yAxis.type = state.logScale ? "logarithmic" : "linear";
+  yAxis.ticks.callback = (v) => Math.round(v);
+
+  const datasets = [
+    line("Liquidez desfasada", model.liquidityIndexed, css("--series-implied"), { order: 2 }),
+    line("BTC real", model.actualIndexed, css("--series-btc"), { order: 1 }),
+  ];
+
+  const config = {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, normalized: true, animation: false,
+      interaction: { mode: "index", intersect: false, axis: "x" },
+      scales: { x: { ...timeAxis("year"), min: model.actualIndexed[0].x }, y: yAxis },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: css("--surface-1"), titleColor: css("--text-primary"),
+          bodyColor: css("--text-secondary"), borderColor: css("--border"), borderWidth: 1,
+          padding: 11,
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x)
+              .toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }),
+            label: (item) => ` ${item.dataset.label}: ${item.parsed.y.toFixed(1)} (base 100)`,
           },
         },
       },
@@ -777,6 +847,7 @@ function renderStats(model, optimal, chosenLag, rows, key) {
   verdict.innerHTML = warnings.join("<br><br>");
 
   const note = document.getElementById("horizonNote");
+  note.hidden = state.indexed;
   if (horizon <= 0) {
     note.innerHTML = `<strong>La proyección no llega a superar el retraso de los datos.</strong>
       La fuente más atrasada de ${LABELS[key]} tiene ${stale} días de antigüedad y el desfase
@@ -869,6 +940,20 @@ function render() {
   const model = buildModel(rows, key, chosenLag, bandPercent);
   if (!model) return;
 
+  document.getElementById("chartTitle").textContent = state.indexed
+    ? "Las dos series indexadas a 100"
+    : "Precio real frente al implícito por liquidez";
+  document.getElementById("chartSub").innerHTML = state.indexed
+    ? `Ambas curvas arrancan en 100 al principio del rango, sobre un único eje. Es la manera
+       honesta de superponerlas: sin dos escalas independientes que se puedan alinear a
+       conveniencia. Verás que la liquidez se mueve mucho menos que el precio — y esa
+       diferencia de amplitud es real, no un defecto del gráfico.`
+    : `Ambas curvas están en dólares por bitcoin, sobre un único eje. La curva implícita sale de
+       un ajuste log-log del precio sobre la liquidez desfasada; el tramo a la derecha de hoy es
+       proyección, y se apoya en liquidez ya observada.`;
+  document.getElementById("chartLegend").hidden = state.indexed;
+  document.getElementById("indexedLegend").hidden = !state.indexed;
+
   renderStats(model, optimal, chosenLag, rows, key);
   renderMain(model, bandPercent);
   renderFlows(rows);
@@ -896,6 +981,14 @@ function wireControls() {
     render();
   });
 
+  const viewButton = document.getElementById("viewMode");
+  viewButton.addEventListener("click", () => {
+    state.indexed = !state.indexed;
+    viewButton.setAttribute("aria-pressed", String(state.indexed));
+    viewButton.textContent = state.indexed ? "Indexada (100)" : "Precio implícito";
+    render();
+  });
+
   const logButton = document.getElementById("logScale");
   logButton.addEventListener("click", () => {
     state.logScale = !state.logScale;
@@ -912,6 +1005,14 @@ async function main() {
   } catch (error) {
     document.getElementById("status").textContent = `No se pudieron cargar los datos: ${error.message}`;
     return;
+  }
+
+  // ?vista=indexada abre directamente en la vista indexada, para poder enlazarla.
+  if (new URLSearchParams(location.search).get("vista") === "indexada") {
+    state.indexed = true;
+    const viewButton = document.getElementById("viewMode");
+    viewButton.setAttribute("aria-pressed", "true");
+    viewButton.textContent = "Indexada (100)";
   }
 
   document.getElementById("from").value = state.rows[0].date;
