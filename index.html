@@ -171,20 +171,20 @@
     <div class="filters">
       <div class="field">
         <label for="series">Serie de liquidez</label>
-        <select id="series"></select>
+        <select id="series" autocomplete="off"></select>
       </div>
       <div class="field">
         <label for="from">Desde</label>
-        <input type="date" id="from">
+        <input type="date" id="from" autocomplete="off">
       </div>
       <div class="field">
         <label for="to">Hasta</label>
-        <input type="date" id="to">
+        <input type="date" id="to" autocomplete="off">
       </div>
       <div class="field">
         <label for="lag">La liquidez va por delante</label>
         <div class="range-row">
-          <input type="range" id="lag" min="0" max="180" step="1" value="7">
+          <input type="range" id="lag" min="0" max="180" step="1" value="7" autocomplete="off">
           <span class="range-value" id="lagValue">7 días</span>
         </div>
       </div>
@@ -363,6 +363,20 @@ function correlationAtLag(rows, key, lag) {
   return { correlation: pearson(priceChange, liquidityChange), samples: priceChange.length };
 }
 
+// Correlación entre los niveles, no entre las variaciones. Es el número alto y
+// llamativo —suele rondar 0,8— y también el que engaña: dos series que crecen a lo
+// largo de los años correlacionan fuerte sin que una prediga a la otra. La prueba
+// es que se voltea al cambiar la ventana, mientras la de variaciones aguanta.
+// Se muestra porque es lo que enseñan otros gráficos, etiquetado por lo que es.
+function levelCorrelationAtLag(rows, key, lag) {
+  const price = [], liquidity = [];
+  for (let i = lag; i < rows.length; i++) {
+    price.push(Math.log(rows[i].close_usd));
+    liquidity.push(Math.log(rows[i - lag][key]));
+  }
+  return pearson(price, liquidity);
+}
+
 // Las muestras se solapan: dos variaciones a 30 días consecutivas comparten 29 de
 // sus 30 días, así que N muestras crudas valen aproximadamente N/30 independientes.
 // Un r alto sobre pocas muestras no es una relación fuerte, es ruido.
@@ -381,6 +395,8 @@ function strength(correlation, samples) {
 // La serie por defecto es la que mejor correlaciona al desfase aplicado. Se mide
 // en lugar de elegirla a mano, que era lo que hacía antes.
 function bestSeries(rows, lag) {
+  // Se decide por la correlación de variaciones, que es la que mide relación real;
+  // hacerlo por la de niveles elegiría siempre la de tendencia más parecida.
   let best = null;
   for (const series of SERIES) {
     const measured = correlationAtLag(rows, series.key, lag);
@@ -585,7 +601,7 @@ function renderChart(series, key, lag) {
 
 /* ---------- paneles ---------- */
 
-function renderStats(rows, key, lag, measured) {
+function renderStats(rows, key, lag, measured, levelCorrelation) {
   const latest = rows[rows.length - 1];
   const stale = stalenessDays(key);
   const quality = strength(measured.correlation, measured.samples);
@@ -593,17 +609,16 @@ function renderStats(rows, key, lag, measured) {
   const cards = [
     { k: "Relación", v: quality.word,
       n: Number.isFinite(measured.correlation)
-        ? `r = ${measured.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días`
+        ? `r = ${measured.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días · ~${Math.max(1, Math.round(quality.effective))} muestras independientes`
         : "sin muestras suficientes" },
+    { k: "Correlación de niveles",
+      v: Number.isFinite(levelCorrelation) ? levelCorrelation.toFixed(3) : "—",
+      n: "la cifra alta que enseñan otros gráficos; mide sobre todo que ambas suben con los años, y se voltea al cambiar la ventana" },
     { k: byKey.get(key).label, v: level(latest[key]),
       n: `dato real más antiguo: ${stale.culprit || "—"}, hace ${days(stale.days)}` },
     { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
     { k: "Desfase aplicado", v: days(lag),
       n: lag === 0 ? "las dos series sin desplazar" : "la liquidez va por delante" },
-    { k: "Muestras", v: `~${Math.max(1, Math.round(quality.effective))}`,
-      n: quality.thin
-        ? `${measured.samples} días solapados: demasiado poco para fiarse`
-        : `independientes, de ${measured.samples.toLocaleString("es-ES")} días solapados` },
   ];
 
   document.getElementById("stats").innerHTML = cards.map((c) => `
@@ -752,7 +767,8 @@ function render() {
   const series = buildSeries(rows, key, lag);
   if (!series) return;
 
-  renderStats(rows, key, lag, correlationAtLag(rows, key, lag));
+  renderStats(rows, key, lag, correlationAtLag(rows, key, lag),
+              levelCorrelationAtLag(rows, key, lag));
   renderChart(series, key, lag);
   renderFlows(rows);
   renderFreshness();
@@ -783,11 +799,21 @@ async function main() {
 
   document.getElementById("series").innerHTML =
     SERIES.map((s) => `<option value="${s.key}">${s.option}</option>`).join("");
-  document.getElementById("from").value = state.rows[0].date;
-  document.getElementById("to").value = state.rows[state.rows.length - 1].date;
 
-  // Arranca en la serie que mejor correlaciona sobre todo el histórico.
-  document.getElementById("series").value = bestSeries(state.rows, DEFAULT_LAG);
+  // Los valores se fijan aquí y no sólo en el HTML: al recargar, el navegador
+  // restaura lo que hubiera en los controles y pisaría los valores por defecto.
+  // Es lo que hacía aparecer un desfase de 85 días con la serie elegida para 7.
+  const last = state.rows[state.rows.length - 1].date;
+  const yearAgo = new Date(Date.parse(`${last}T00:00:00Z`) - 365 * DAY_MS)
+    .toISOString().slice(0, 10);
+
+  document.getElementById("lag").value = String(DEFAULT_LAG);
+  document.getElementById("to").value = last;
+  document.getElementById("from").value = yearAgo > state.rows[0].date ? yearAgo : state.rows[0].date;
+
+  // La serie de arranque se mide sobre el rango y el desfase que se van a mostrar,
+  // no sobre otros: elegir la mejor a 7 días y dibujarla a 85 daba un r sin sentido.
+  document.getElementById("series").value = bestSeries(selectedRows(), DEFAULT_LAG);
 
   wireControls();
   render();
