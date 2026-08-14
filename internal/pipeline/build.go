@@ -45,6 +45,12 @@ type Row struct {
 
 	FedNetLiqMUSD float64
 	GlobalCBMUSD  float64
+
+	// El mismo agregado global pero convirtiendo todo el histórico al último tipo
+	// de cambio conocido, en vez de al de la fecha de cada observación. Las dos
+	// convenciones son defendibles y responden a preguntas distintas, así que se
+	// guardan ambas y la página deja elegir.
+	GlobalCBFXNowMUSD float64
 }
 
 // Build converts every series to millions of USD and expands them onto a daily
@@ -62,12 +68,19 @@ func Build(inputs Inputs, start, end time.Time) []Row {
 	bojMUSD := convert(inputs.BoJAssets, inputs.YenPerUSD, liquidity.HundredMillionLocalToMUSD)
 	pbocMUSD := convert(inputs.PBoCAssets, inputs.YuanPerUSD, liquidity.HundredMillionLocalToMUSD)
 
+	ecbNow := convertAtFixedRate(inputs.ECBAssets, latestRate(inputs.USDPerEUR), liquidity.ECBToMUSD)
+	bojNow := convertAtFixedRate(inputs.BoJAssets, latestRate(inputs.YenPerUSD), liquidity.HundredMillionLocalToMUSD)
+	pbocNow := convertAtFixedRate(inputs.PBoCAssets, latestRate(inputs.YuanPerUSD), liquidity.HundredMillionLocalToMUSD)
+
 	walcl := liquidity.ForwardFill(inputs.WALCL, start, end)
 	wtregen := liquidity.ForwardFill(inputs.WTREGEN, start, end)
 	rrp := liquidity.ForwardFill(rescale(inputs.RRP), start, end)
 	ecb := liquidity.ForwardFill(ecbMUSD, start, end)
 	boj := liquidity.ForwardFill(bojMUSD, start, end)
 	pboc := liquidity.ForwardFill(pbocMUSD, start, end)
+	ecbAtNow := liquidity.ForwardFill(ecbNow, start, end)
+	bojAtNow := liquidity.ForwardFill(bojNow, start, end)
+	pbocAtNow := liquidity.ForwardFill(pbocNow, start, end)
 	reserves := liquidity.ForwardFill(inputs.Reserves, start, end)
 	repo := liquidity.ForwardFill(rescale(inputs.Repo), start, end)
 	discount := liquidity.ForwardFill(inputs.DiscountWindow, start, end)
@@ -100,6 +113,8 @@ func Build(inputs Inputs, start, end time.Time) []Row {
 			DiscountWindowMUSD: dw,
 			FedNetLiqMUSD:      liquidity.FedNetLiquidity(w, tga, r),
 			GlobalCBMUSD:       liquidity.GlobalCBBalance(w, e, b, cn),
+			GlobalCBFXNowMUSD: liquidity.GlobalCBBalance(
+				w, ecbAtNow[date], bojAtNow[date], pbocAtNow[date]),
 		})
 	}
 	return rows
@@ -140,6 +155,36 @@ func convert(
 		converted[date] = conversion(amount, rate)
 	}
 	return converted
+}
+
+// convertAtFixedRate converts every observation at one single rate, rather than at
+// the rate of its own date. Removes currency movement from the series: what is left
+// moves only when a central bank's balance sheet moves.
+func convertAtFixedRate(
+	amounts map[time.Time]float64,
+	rate float64,
+	conversion func(amount, rate float64) float64,
+) map[time.Time]float64 {
+	converted := make(map[time.Time]float64, len(amounts))
+	if rate == 0 {
+		return converted
+	}
+	for date, amount := range amounts {
+		converted[date] = conversion(amount, rate)
+	}
+	return converted
+}
+
+// latestRate is the most recently published rate in the series.
+func latestRate(rates map[time.Time]float64) float64 {
+	var newest time.Time
+	var value float64
+	for date, rate := range rates {
+		if value == 0 || date.After(newest) {
+			newest, value = date, rate
+		}
+	}
+	return value
 }
 
 // rateAsOf returns the most recent rate published at or before date.

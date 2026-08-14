@@ -40,7 +40,7 @@ var (
 		"walcl_musd", "wtregen_musd", "rrp_musd", "ecb_assets_musd", "boj_assets_musd",
 		"pboc_assets_musd",
 		"reserves_musd", "repo_musd", "discount_window_musd",
-		"fed_net_liq_musd", "global_cb_musd",
+		"fed_net_liq_musd", "global_cb_musd", "global_cb_fxnow_musd",
 	}
 )
 
@@ -179,6 +179,7 @@ func run(dataDir, startFlag string) error {
 			money(row.DiscountWindowMUSD),
 			money(row.FedNetLiqMUSD),
 			money(row.GlobalCBMUSD),
+			money(row.GlobalCBFXNowMUSD),
 		})
 	}
 	if err := liquidityTable.Save(liquidityPath); err != nil {
@@ -197,6 +198,7 @@ func run(dataDir, startFlag string) error {
 			"All liquidity figures are in millions of USD.",
 			"global_cb_musd = Fed + ECB + BoJ + PBoC, all converted to millions of USD.",
 			"The PBoC component is annual and lags by over a year, so it holds flat between steps.",
+			"global_cb_fxnow_musd is the same aggregate converted at the latest FX rate throughout, which removes currency movement from the series.",
 			"Liquidity series are forward-filled between publications; they are stock variables.",
 		},
 	}

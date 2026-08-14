@@ -120,6 +120,10 @@
        text-transform: uppercase; letter-spacing: 0.06em; }
   .scroll-x { overflow-x: auto; }
   .table-wrap { max-height: 420px; overflow-y: auto; }
+  tr.future td { color: var(--text-muted); background: rgba(235, 104, 52, 0.05); }
+  tr.future td:first-child { color: var(--text-secondary); }
+  .tag { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em;
+         color: var(--series-liquidity); margin-left: 6px; }
   .hint { font-size: 11.5px; color: var(--text-muted); font-weight: 400; margin-top: 3px; }
 
   .freshness { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
@@ -198,6 +202,10 @@
         </select>
       </div>
       <div class="field">
+        <label for="fx">Divisa</label>
+        <button id="fx" aria-pressed="false" autocomplete="off">Fecha de observación</button>
+      </div>
+      <div class="field">
         <label for="amplitude">Amplitud de la liquidez</label>
         <button id="amplitude" aria-pressed="true" autocomplete="off">Igualada</button>
       </div>
@@ -260,6 +268,7 @@
       correspondería al nivel de liquidez de ese día según el ajuste histórico del rango: un nivel
       de referencia, no una previsión.
     </p>
+    <p class="note" id="tableNote"></p>
     <div class="scroll-x table-wrap"><table id="dataTable"></table></div>
   </div>
 
@@ -298,6 +307,8 @@ const DEFAULT_LAG = 7;
 const SERIES = [
   { key: "global_cb_musd", label: "Liquidez global",
     option: "Liquidez global (Fed + BCE + BoJ + PBoC)",
+    // Misma serie convertida al último tipo de cambio en todo el histórico.
+    atLatestFX: "global_cb_fxnow_musd",
     components: ["WALCL", "ECBASSETSW", "JPNASSETS", "PBOC_ASSETS", "DEXUSEU", "DEXJPUS", "DEXCHUS"] },
   { key: "fed_net_liq_musd", label: "Fed Net Liquidity",
     option: "Fed Net Liquidity (balance − TGA − RRP)",
@@ -312,7 +323,14 @@ const SERIES = [
 
 const byKey = new Map(SERIES.map((s) => [s.key, s]));
 
-const state = { rows: [], meta: null, logScale: true, criterion: "changes", matchAmplitude: true };
+// Sólo el agregado global tiene dos versiones: las demás series ya están en
+// dólares de origen, así que la convención de divisa no las toca.
+function column(key) {
+  const alternative = byKey.get(key).atLatestFX;
+  return state.fxAtLatest && alternative ? alternative : key;
+}
+
+const state = { rows: [], meta: null, logScale: true, criterion: "changes", matchAmplitude: true, fxAtLatest: false };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -658,7 +676,7 @@ function renderChart(series, key, lag) {
 
 /* ---------- paneles ---------- */
 
-function renderStats(rows, key, lag, window, measured, levelCorrelation, factor) {
+function renderStats(rows, key, col, lag, window, measured, levelCorrelation, factor) {
   const latest = rows[rows.length - 1];
   const stale = stalenessDays(key);
   const quality = strength(measured.correlation, measured.samples, window);
@@ -671,7 +689,7 @@ function renderStats(rows, key, lag, window, measured, levelCorrelation, factor)
     { k: "Correlación de niveles",
       v: Number.isFinite(levelCorrelation) ? levelCorrelation.toFixed(3) : "—",
       n: "la cifra alta que enseñan otros gráficos; mide sobre todo que ambas suben con los años, y se voltea al cambiar la ventana" },
-    { k: byKey.get(key).label, v: level(latest[key]),
+    { k: byKey.get(key).label, v: level(latest[col]),
       n: `dato real más antiguo: ${stale.culprit || "—"}, hace ${days(stale.days)}` },
     { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
     { k: "Desfase aplicado", v: days(lag),
@@ -772,27 +790,65 @@ function renderFreshness() {
     }).join("");
 }
 
-function renderTable(rows, key, lag, fit) {
-  const start = Math.max(lag, rows.length - 120);
+function renderTable(rows, key, col, lag, fit) {
   const head = `<thead><tr><th>Fecha</th><th>BTC real</th><th>BTC en base a la liquidez</th>
     <th>Diferencia</th><th>${byKey.get(key).label} (${lag} d antes)</th></tr></thead>`;
 
+  const based = (source) => fit ? Math.exp(fit.intercept + fit.slope * Math.log(source)) : null;
   const body = [];
+
+  // Los próximos `lag` días. No son una previsión: la liquidez que los gobierna es
+  // la de hace `lag` días, que ya está observada. Sólo se aplica a datos conocidos
+  // el mismo ajuste que a todo lo demás.
+  const lastDate = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
+  for (let ahead = lag; ahead >= 1; ahead--) {
+    const source = rows[rows.length - 1 + ahead - lag][col];
+    const value = based(source);
+    const date = new Date(lastDate + ahead * DAY_MS).toISOString().slice(0, 10);
+
+    body.push(`<tr class="future">
+      <td>${date} <span class="tag">en ${days(ahead)}</span></td>
+      <td>—</td>
+      <td>${value ? usd(value) : "—"}</td>
+      <td>—</td>
+      <td>${trillions(source)}</td>
+    </tr>`);
+  }
+
+  const start = Math.max(lag, rows.length - 120);
   for (let i = rows.length - 1; i >= start; i--) {
-    const source = rows[i - lag][key];
-    const based = fit ? Math.exp(fit.intercept + fit.slope * Math.log(source)) : null;
-    const diff = based ? (rows[i].close_usd / based - 1) * 100 : NaN;
+    const source = rows[i - lag][col];
+    const value = based(source);
+    const diff = value ? (rows[i].close_usd / value - 1) * 100 : NaN;
 
     body.push(`<tr>
       <td>${rows[i].date}</td>
       <td>${usd(rows[i].close_usd)}</td>
-      <td>${based ? usd(based) : "—"}</td>
+      <td>${value ? usd(value) : "—"}</td>
       <td>${Number.isFinite(diff) ? `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} %` : "—"}</td>
       <td>${trillions(source)}</td>
     </tr>`);
   }
 
   document.getElementById("dataTable").innerHTML = head + `<tbody>${body.join("")}</tbody>`;
+
+  const stale = stalenessDays(key);
+  const note = lag === 0
+    ? "Sin desfase no hay filas futuras: sube el desfase para proyectar hacia delante."
+    : `Las <strong>${lag}</strong> primeras filas son fechas que aún no han llegado, y no son una
+       previsión: la liquidez que les corresponde es la de hace ${days(lag)}, que ya está publicada.
+       Lo único que se hace con ellas es aplicarles el mismo ajuste que a todo lo demás.`;
+
+  // El componente más atrasado no invalida la proyección: los demás pueden ser
+  // frescos y pesar más en el agregado. Se dice cuál va con retraso y se deja que
+  // el lector juzgue, en vez de dictaminar que todo el tramo no vale.
+  const caveat = stale.days > lag
+    ? ` Dentro de esta serie, <strong>${stale.culprit}</strong> lleva ${days(stale.days)} sin
+        actualizarse, así que esa parte del agregado va arrastrada desde entonces; el resto de
+        componentes sí son recientes.`
+    : "";
+
+  document.getElementById("tableNote").innerHTML = note + caveat;
 }
 
 /* ---------- orquestación ---------- */
@@ -826,15 +882,16 @@ function render() {
   document.getElementById("legendLiquidity").textContent =
     `${byKey.get(key).label}, ${days(lag)} antes`;
 
-  const series = buildSeries(rows, key, lag, state.matchAmplitude);
+  const col = column(key);
+  const series = buildSeries(rows, col, lag, state.matchAmplitude);
   if (!series) return;
 
-  renderStats(rows, key, lag, window, correlationAtLag(rows, key, lag, window),
-              levelCorrelationAtLag(rows, key, lag), series.factor);
+  renderStats(rows, key, col, lag, window, correlationAtLag(rows, col, lag, window),
+              levelCorrelationAtLag(rows, col, lag), series.factor);
   renderChart(series, key, lag);
   renderFlows(rows);
   renderFreshness();
-  renderTable(rows, key, lag, fitLogLog(rows, key, lag));
+  renderTable(rows, key, col, lag, fitLogLog(rows, col, lag));
 }
 
 function wireControls() {
@@ -850,6 +907,14 @@ function wireControls() {
     criterionButton.setAttribute("aria-pressed", String(state.criterion === "levels"));
     criterionButton.textContent = state.criterion === "levels" ? "Niveles" : "Variaciones";
     applyBestSeries();
+    render();
+  });
+
+  const fxButton = document.getElementById("fx");
+  fxButton.addEventListener("click", () => {
+    state.fxAtLatest = !state.fxAtLatest;
+    fxButton.setAttribute("aria-pressed", String(state.fxAtLatest));
+    fxButton.textContent = state.fxAtLatest ? "Tipo actual" : "Fecha de observación";
     render();
   });
 
@@ -916,6 +981,13 @@ function applyURLParams() {
   set("hasta", "to");
   set("desfase", "lag");
   set("ventana", "window");
+
+  if (params.get("divisa") === "actual") {
+    state.fxAtLatest = true;
+    const button = document.getElementById("fx");
+    button.setAttribute("aria-pressed", "true");
+    button.textContent = "Tipo actual";
+  }
 
   if (params.get("amplitud") === "real") {
     state.matchAmplitude = false;

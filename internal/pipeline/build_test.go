@@ -209,3 +209,45 @@ func TestConversionStillDropsObservationsWithNoEarlierRate(t *testing.T) {
 		t.Errorf("sin ningún tipo anterior a la observación la fila debe caer, got %d", len(rows))
 	}
 }
+
+// La segunda convención de divisa: convertir TODO el histórico al último tipo
+// conocido. Aísla el movimiento de los balances del de las divisas, y es la que
+// usan los gráficos que circulan — por eso su agregado sale ~0,5 billones más
+// alto que el nuestro con el yuan de 2024.
+func TestGlobalAtLatestFXUsesTheNewestRateForEveryObservation(t *testing.T) {
+	inputs := baseInputs()
+	// El yuan se aprecia después de la observación del balance chino.
+	inputs.YuanPerUSD = map[time.Time]float64{
+		day(2024, time.December, 31): 7.2993, // el de su fecha
+		day(2026, time.August, 7):    6.7474, // el último conocido
+	}
+
+	rows := Build(inputs, day(2026, time.August, 5), day(2026, time.August, 5))
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+
+	// La convención por fecha de observación no cambia: sigue usando 7,2993.
+	closeTo(t, rows[0].PBoCAssetsMUSD, 440_513.312973013*100/7.2993)
+
+	// La de tipo actual usa 6,7474 para el mismo balance, que da más dólares.
+	if rows[0].GlobalCBFXNowMUSD <= rows[0].GlobalCBMUSD {
+		t.Errorf("con un yuan más fuerte el agregado a tipo actual debe ser mayor: %.0f vs %.0f",
+			rows[0].GlobalCBFXNowMUSD, rows[0].GlobalCBMUSD)
+	}
+
+	// El único componente que cambia aquí es el chino, así que la diferencia entre
+	// ambos agregados es exactamente la diferencia de convertir China de un modo u otro.
+	esperado := 440_513.312973013*100/6.7474 - 440_513.312973013*100/7.2993
+	closeTo(t, rows[0].GlobalCBFXNowMUSD-rows[0].GlobalCBMUSD, esperado)
+}
+
+func TestGlobalAtLatestFXEqualsGlobalWhenRatesNeverMoved(t *testing.T) {
+	inputs := baseInputs()
+	// Un único tipo para cada divisa: las dos convenciones deben coincidir.
+	rows := Build(inputs, day(2026, time.August, 5), day(2026, time.August, 5))
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	closeTo(t, rows[0].GlobalCBFXNowMUSD, rows[0].GlobalCBMUSD)
+}
