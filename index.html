@@ -193,29 +193,8 @@
         </div>
       </div>
       <div class="field">
-        <label for="window">Ventana de comparación</label>
-        <select id="window" autocomplete="off">
-          <option value="30" selected>30 días</option>
-          <option value="90">90 días</option>
-          <option value="180">180 días</option>
-          <option value="365">365 días</option>
-        </select>
-      </div>
-      <div class="field">
         <label for="fx">Divisa</label>
         <button id="fx" aria-pressed="false" autocomplete="off">Fecha de observación</button>
-      </div>
-      <div class="field">
-        <label for="amplitude">Amplitud de la liquidez</label>
-        <button id="amplitude" aria-pressed="true" autocomplete="off">Igualada</button>
-      </div>
-      <div class="field">
-        <label for="criterion">Elegir serie por</label>
-        <button id="criterion" aria-pressed="false" autocomplete="off">Variaciones</button>
-      </div>
-      <div class="field">
-        <label for="logScale">Eje Y</label>
-        <button id="logScale" aria-pressed="true">Logarítmico</button>
       </div>
     </div>
   </div>
@@ -299,7 +278,7 @@ const DAY_MS = 86400000;
 // liquidez-precio es lenta, así que a 30 días se mide sobre todo ruido: sobre el
 // histórico completo la liquidez global pasa de r=+0,196 a 30 días a +0,441 a 365.
 // El precio es que las muestras independientes caen de 102 a 7.
-const DEFAULT_WINDOW = 30;
+
 const DEFAULT_LAG = 7;
 
 // Cada serie con los componentes que determinan su frescura. La observación más
@@ -330,7 +309,12 @@ function column(key) {
   return state.fxAtLatest && alternative ? alternative : key;
 }
 
-const state = { rows: [], meta: null, logScale: true, criterion: "changes", matchAmplitude: true, fxAtLatest: false };
+// Estos tres eran controles y ahora son fijos: eje lineal, amplitud de la liquidez
+// igualada a la del precio, y la serie global como punto de partida.
+const DEFAULT_SERIES = "global_cb_musd";
+const GUARD_WINDOW = 30;   // colchón mínimo de días que se exige al rango
+
+const state = { rows: [], meta: null, fxAtLatest: false };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -387,20 +371,6 @@ function pearson(xs, ys) {
   return sxy / Math.sqrt(sxx * syy);
 }
 
-// Correlación al desfase que el usuario ha elegido, no al mejor de 181 candidatos.
-// Buscar el máximo sobre rangos cortos encontraba correlaciones altísimas por azar;
-// si el desfase lo fijas tú, esa trampa desaparece.
-//
-// Se mide entre variaciones logarítmicas a 30 días y no entre niveles: dos series
-// con tendencia correlacionan cerca de 0,9 sin tener ninguna relación.
-function correlationAtLag(rows, key, lag, window) {
-  const priceChange = [], liquidityChange = [];
-  for (let i = Math.max(window, lag + window); i < rows.length; i++) {
-    priceChange.push(Math.log(rows[i].close_usd / rows[i - window].close_usd));
-    liquidityChange.push(Math.log(rows[i - lag][key] / rows[i - lag - window][key]));
-  }
-  return { correlation: pearson(priceChange, liquidityChange), samples: priceChange.length };
-}
 
 // Correlación entre los niveles, no entre las variaciones. Es el número alto y
 // llamativo —suele rondar 0,8— y también el que engaña: dos series que crecen a lo
@@ -419,44 +389,10 @@ function levelCorrelationAtLag(rows, key, lag) {
 // Las muestras se solapan: dos variaciones a 30 días consecutivas comparten 29 de
 // sus 30 días, así que N muestras crudas valen aproximadamente N/30 independientes.
 // Un r alto sobre pocas muestras no es una relación fuerte, es ruido.
-function strength(correlation, samples, window) {
-  const effective = samples / window;
-  const r = Math.abs(correlation);
-
-  if (!Number.isFinite(r)) return { word: "sin datos", effective };
-  if (effective < 3) return { word: "no fiable", effective, thin: true };
-  if (r < 0.20) return { word: "muy débil", effective };
-  if (r < 0.40) return { word: "débil", effective };
-  if (r < 0.60) return { word: "moderada", effective };
-  return { word: "fuerte", effective };
-}
 
 // La serie por defecto es la que mejor correlaciona al desfase aplicado. Se mide
 // en lugar de elegirla a mano, que era lo que hacía antes.
-// La serie de arranque, por el criterio que el usuario haya elegido.
-//
-// Por variaciones sale la de relación real más fuerte, que es la medida que no se
-// voltea al cambiar de ventana. Por niveles sale la de cifra más alta, que es la
-// que tiene la tendencia más parecida a BTC — llamativa, pero eso es justo la
-// trampa. Las dos cifras están siempre en pantalla, así que la elección del
-// criterio no esconde nada.
-function bestSeries(rows, lag, criterion, window) {
-  let best = null;
-  for (const series of SERIES) {
-    const r = criterion === "levels"
-      ? levelCorrelationAtLag(rows, series.key, lag)
-      : correlationAtLag(rows, series.key, lag, window).correlation;
-    if (!Number.isFinite(r)) continue;
-    if (!best || r > best.r) best = { key: series.key, r };
-  }
-  return best ? best.key : SERIES[0].key;
-}
 
-function applyBestSeries() {
-  const lag = Number(document.getElementById("lag").value);
-  const window = Number(document.getElementById("window").value);
-  document.getElementById("series").value = bestSeries(selectedRows(), lag, state.criterion, window);
-}
 
 // Ajuste log-log del precio sobre la liquidez desfasada. Sirve para la columna
 // «BTC en base a la liquidez»: un nivel de referencia dentro del rango observado,
@@ -601,7 +537,7 @@ function standardDeviation(values) {
 // los gráficos donde una línea de liquidez va superpuesta al eje de precios, sólo
 // que allí el factor no se dice; aquí se devuelve y se enseña. Se opera en
 // logaritmos porque lo que se iguala es la amplitud relativa.
-function buildSeries(rows, key, lag, matchAmplitude) {
+function buildSeries(rows, key, lag) {
   if (rows.length <= lag) return null;
 
   const btc = [], liquidity = [];
@@ -616,7 +552,7 @@ function buildSeries(rows, key, lag, matchAmplitude) {
 
   const spreadBTC = standardDeviation(logBTC);
   const spreadLiquidity = standardDeviation(logLiquidity);
-  const factor = matchAmplitude && spreadLiquidity > 0 ? spreadBTC / spreadLiquidity : 1;
+  const factor = spreadLiquidity > 0 ? spreadBTC / spreadLiquidity : 1;
   const meanLiquidity = logLiquidity.reduce((a, b) => a + b, 0) / logLiquidity.length;
 
   for (let i = lag; i < rows.length; i++) {
@@ -632,7 +568,7 @@ function buildSeries(rows, key, lag, matchAmplitude) {
 
 function renderChart(series, key, lag) {
   const yAxis = axisDefaults();
-  yAxis.type = state.logScale ? "logarithmic" : "linear";
+  yAxis.type = "linear";
   yAxis.ticks.callback = (v) => Math.round(v);
 
   const config = {
@@ -676,28 +612,21 @@ function renderChart(series, key, lag) {
 
 /* ---------- paneles ---------- */
 
-function renderStats(rows, key, col, lag, window, measured, levelCorrelation, factor) {
+function renderStats(rows, key, col, lag, levelCorrelation, factor) {
   const latest = rows[rows.length - 1];
   const stale = stalenessDays(key);
-  const quality = strength(measured.correlation, measured.samples, window);
 
   const cards = [
-    { k: "Relación", v: quality.word,
-      n: Number.isFinite(measured.correlation)
-        ? `r = ${measured.correlation.toFixed(3)} entre variaciones a ${window} días · ~${Math.max(1, Math.round(quality.effective))} muestras independientes`
-        : "sin muestras suficientes" },
     { k: "Correlación de niveles",
       v: Number.isFinite(levelCorrelation) ? levelCorrelation.toFixed(3) : "—",
-      n: "la cifra alta que enseñan otros gráficos; mide sobre todo que ambas suben con los años, y se voltea al cambiar la ventana" },
+      n: `entre el precio y la liquidez de ${days(lag)} antes, en el rango seleccionado` },
     { k: byKey.get(key).label, v: level(latest[col]),
       n: `dato real más antiguo: ${stale.culprit || "—"}, hace ${days(stale.days)}` },
     { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
     { k: "Desfase aplicado", v: days(lag),
       n: lag === 0 ? "las dos series sin desplazar" : "la liquidez va por delante" },
-    { k: "Amplitud", v: state.matchAmplitude ? `×${factor.toFixed(1)}` : "real",
-      n: state.matchAmplitude
-        ? `la liquidez se mueve ${factor.toFixed(1)} veces menos que el precio; en el gráfico va estirada por ese factor para poder comparar las formas`
-        : "cada serie con su recorrido real" },
+    { k: "Amplitud", v: `×${factor.toFixed(1)}`,
+      n: `la liquidez se mueve ${factor.toFixed(1)} veces menos que el precio; en el gráfico va estirada por ese factor para poder comparar las formas` },
   ];
 
   document.getElementById("stats").innerHTML = cards.map((c) => `
@@ -862,16 +791,14 @@ function selectedRows() {
 function render() {
   const key = document.getElementById("series").value;
   const lag = Number(document.getElementById("lag").value);
-  const window = Number(document.getElementById("window").value);
   const rows = selectedRows();
 
   const statusEl = document.getElementById("status");
-  if (rows.length <= lag + window + 2) {
+  if (rows.length <= lag + GUARD_WINDOW) {
     statusEl.hidden = false;
     statusEl.textContent =
-      `El rango seleccionado tiene ${rows.length} días, que no dan para un desfase de ${lag} ` +
-      `más la ventana de ${window} días con que se comparan las series. ` +
-      `Amplía el rango, reduce el desfase o acorta la ventana.`;
+      `El rango seleccionado tiene ${rows.length} días, que no dan para un desfase de ${lag}. ` +
+      `Amplía el rango o reduce el desfase.`;
     document.getElementById("app").hidden = true;
     return;
   }
@@ -883,11 +810,10 @@ function render() {
     `${byKey.get(key).label}, ${days(lag)} antes`;
 
   const col = column(key);
-  const series = buildSeries(rows, col, lag, state.matchAmplitude);
+  const series = buildSeries(rows, col, lag);
   if (!series) return;
 
-  renderStats(rows, key, col, lag, window, correlationAtLag(rows, col, lag, window),
-              levelCorrelationAtLag(rows, col, lag), series.factor);
+  renderStats(rows, key, col, lag, levelCorrelationAtLag(rows, col, lag), series.factor);
   renderChart(series, key, lag);
   renderFlows(rows);
   renderFreshness();
@@ -895,20 +821,9 @@ function render() {
 }
 
 function wireControls() {
-  for (const id of ["series", "from", "to", "lag", "window"]) {
+  for (const id of ["series", "from", "to", "lag"]) {
     document.getElementById(id).addEventListener("input", render);
   }
-
-  // Cambiar el criterio vuelve a elegir la serie; cambiar el rango o el desfase no,
-  // para no pisar una serie que hayas seleccionado a mano.
-  const criterionButton = document.getElementById("criterion");
-  criterionButton.addEventListener("click", () => {
-    state.criterion = state.criterion === "changes" ? "levels" : "changes";
-    criterionButton.setAttribute("aria-pressed", String(state.criterion === "levels"));
-    criterionButton.textContent = state.criterion === "levels" ? "Niveles" : "Variaciones";
-    applyBestSeries();
-    render();
-  });
 
   const fxButton = document.getElementById("fx");
   fxButton.addEventListener("click", () => {
@@ -918,21 +833,6 @@ function wireControls() {
     render();
   });
 
-  const amplitudeButton = document.getElementById("amplitude");
-  amplitudeButton.addEventListener("click", () => {
-    state.matchAmplitude = !state.matchAmplitude;
-    amplitudeButton.setAttribute("aria-pressed", String(state.matchAmplitude));
-    amplitudeButton.textContent = state.matchAmplitude ? "Igualada" : "Real";
-    render();
-  });
-
-  const logButton = document.getElementById("logScale");
-  logButton.addEventListener("click", () => {
-    state.logScale = !state.logScale;
-    logButton.setAttribute("aria-pressed", String(state.logScale));
-    logButton.textContent = state.logScale ? "Logarítmico" : "Lineal";
-    render();
-  });
 }
 
 async function main() {
@@ -954,13 +854,9 @@ async function main() {
     .toISOString().slice(0, 10);
 
   document.getElementById("lag").value = String(DEFAULT_LAG);
-  document.getElementById("window").value = String(DEFAULT_WINDOW);
+  document.getElementById("series").value = DEFAULT_SERIES;
   document.getElementById("to").value = last;
   document.getElementById("from").value = yearAgo > state.rows[0].date ? yearAgo : state.rows[0].date;
-
-  // La serie de arranque se mide sobre el rango y el desfase que se van a mostrar,
-  // no sobre otros: elegir la mejor a 7 días y dibujarla a 85 daba un r sin sentido.
-  applyBestSeries();
 
   applyURLParams();
   wireControls();
@@ -980,20 +876,12 @@ function applyURLParams() {
   set("desde", "from");
   set("hasta", "to");
   set("desfase", "lag");
-  set("ventana", "window");
 
   if (params.get("divisa") === "actual") {
     state.fxAtLatest = true;
     const button = document.getElementById("fx");
     button.setAttribute("aria-pressed", "true");
     button.textContent = "Tipo actual";
-  }
-
-  if (params.get("amplitud") === "real") {
-    state.matchAmplitude = false;
-    const button = document.getElementById("amplitude");
-    button.setAttribute("aria-pressed", "false");
-    button.textContent = "Real";
   }
 }
 
