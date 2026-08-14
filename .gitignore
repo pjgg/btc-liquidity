@@ -1,0 +1,81 @@
+# ---------------------------------------------------------------------------
+# Local-only working documents
+# ---------------------------------------------------------------------------
+# Design specs and implementation plans stay on this machine.
+docs/superpowers/
+
+# ---------------------------------------------------------------------------
+# NOT ignored, deliberately: data/
+# ---------------------------------------------------------------------------
+# data/*.csv IS the database for this project — the scheduled Action commits it
+# and GitHub Pages serves it. Never add a data/ rule here. If the page ever shows
+# an empty chart after a deploy, check `git check-ignore -v data/btc.csv` first.
+
+# ---------------------------------------------------------------------------
+# Secrets and environment
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+service-account*.json
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Test and type-check caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ---------------------------------------------------------------------------
+# Scratch and logs
+# ---------------------------------------------------------------------------
+scratch/
+tmp/
+*.log
+*.bak
+*.orig
+*.rej
+
+# Raw API responses kept while debugging a fetch
+scripts/_raw/
+
+# ---------------------------------------------------------------------------
+# Editors and tooling
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/settings.local.json
+
+# ---------------------------------------------------------------------------
+# OS
+# ---------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+desktop.ini
