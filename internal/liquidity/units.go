@@ -94,7 +94,12 @@ func CheckFreshness(seriesID string, lastObservation time.Time, frequency string
 // publications — so gaps carry the last value forward. Interpolating would
 // invent intermediate readings that were never observed.
 //
-// Dates before the first observation are omitted rather than back-filled.
+// An observation from before start seeds the window: a balance sheet published
+// last month still holds its value today, so the most recent observation at or
+// before start is carried in. Without this, a monthly series would blank the
+// first weeks of every range.
+//
+// Dates before the first observation of all are omitted rather than back-filled.
 func ForwardFill(observations map[time.Time]float64, start, end time.Time) map[time.Time]float64 {
 	filled := make(map[time.Time]float64)
 	if len(observations) == 0 {
@@ -102,7 +107,17 @@ func ForwardFill(observations map[time.Time]float64, start, end time.Time) map[t
 	}
 
 	var current float64
+	var seedDate time.Time
 	seen := false
+	for d, v := range observations {
+		if d.After(start) {
+			continue
+		}
+		if !seen || d.After(seedDate) {
+			current, seedDate, seen = v, d, true
+		}
+	}
+
 	for d := start; !d.After(end); d = d.AddDate(0, 0, 1) {
 		if v, ok := observations[d]; ok {
 			current, seen = v, true

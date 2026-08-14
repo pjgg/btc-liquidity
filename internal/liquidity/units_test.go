@@ -198,6 +198,30 @@ func TestForwardFillOmitsDatesBeforeFirstObservation(t *testing.T) {
 	closeTo(t, filled[day(2026, time.August, 6)], 1.0, 1e-9)
 }
 
+// A stock variable observed before the window still holds its value inside it.
+// The BoJ publishes monthly, so a window starting mid-month has its most recent
+// observation behind the start date — dropping it would blank the first weeks
+// of every range.
+func TestForwardFillSeedsFromObservationBeforeStart(t *testing.T) {
+	observations := map[time.Time]float64{day(2026, time.August, 1): 4_089_727.0}
+	filled := ForwardFill(observations, day(2026, time.August, 5), day(2026, time.August, 7))
+
+	if len(filled) != 3 {
+		t.Fatalf("expected 3 days carried from the earlier observation, got %d", len(filled))
+	}
+	closeTo(t, filled[day(2026, time.August, 5)], 4_089_727.0, 1e-9)
+	closeTo(t, filled[day(2026, time.August, 7)], 4_089_727.0, 1e-9)
+}
+
+func TestForwardFillSeedsFromTheLatestObservationBeforeStart(t *testing.T) {
+	observations := map[time.Time]float64{
+		day(2026, time.July, 1):   100.0,
+		day(2026, time.August, 1): 200.0, // the one that should win
+	}
+	filled := ForwardFill(observations, day(2026, time.August, 5), day(2026, time.August, 5))
+	closeTo(t, filled[day(2026, time.August, 5)], 200.0, 1e-9)
+}
+
 func TestForwardFillEmptyInput(t *testing.T) {
 	filled := ForwardFill(map[time.Time]float64{}, day(2026, time.August, 1), day(2026, time.August, 5))
 	if len(filled) != 0 {
