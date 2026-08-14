@@ -137,6 +137,7 @@
   .freshness { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
   .freshness div { font-size: 13px; }
   .freshness .id { color: var(--text-secondary); }
+  .hint { font-size: 11.5px; color: var(--text-muted); font-weight: 400; margin-top: 3px; }
   .freshness .age { font-variant-numeric: tabular-nums; }
 
   .verdict {
@@ -242,6 +243,19 @@
     </ul>
     <div class="plot"><canvas id="mainChart"></canvas></div>
     <p class="note" id="horizonNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>¿Se está inyectando o drenando liquidez?</h2>
+    <p class="sub">
+      Flujos de la Reserva Federal en el rango seleccionado. Ojo al signo: en unos
+      indicadores subir significa inyectar y en otros justo lo contrario, así que la columna
+      de lectura ya lo traduce. Las reservas bancarias son el resultado neto de todos ellos.
+    </p>
+    <p class="verdict" id="flowVerdict"></p>
+    <div class="scroll-x">
+      <table id="flowTable"></table>
+    </div>
   </div>
 
   <div class="card">
@@ -466,6 +480,116 @@ function stalenessDays(key, meta) {
     if (age > oldest) oldest = age;
   }
   return oldest;
+}
+
+/* ---------- flujos de liquidez ---------- */
+
+// El signo es lo delicado: subir la cuenta del Tesoro o el repo inverso RETIRA
+// dinero del sistema, mientras que subir el balance o el repo lo mete. Ponerlo
+// como dato y no como texto evita traducir mal la dirección en cada sitio.
+const FLOWS = [
+  { key: "walcl_musd", label: "Balance de la Fed", sign: 1,
+    up: "inyecta", down: "retira",
+    note: "Compra de activos: crece con QE, cae con QT." },
+  { key: "reserves_musd", label: "Reservas bancarias", sign: 1,
+    up: "más liquidez", down: "menos liquidez",
+    note: "Efectivo de los bancos en la Fed. Es el resultado neto de todo lo demás." },
+  { key: "wtregen_musd", label: "Cuenta del Tesoro", sign: -1,
+    up: "drena", down: "inyecta",
+    note: "Sube cuando el Tesoro acumula, y ese dinero sale del sistema." },
+  { key: "rrp_musd", label: "Repo inverso", sign: -1,
+    up: "drena", down: "inyecta",
+    note: "Dinero aparcado en la Fed. Vaciarlo devuelve liquidez al sistema." },
+  { key: "repo_musd", label: "Repo", sign: 1,
+    up: "inyecta", down: "retira",
+    note: "La Fed prestando efectivo contra colateral." },
+  { key: "discount_window_musd", label: "Ventanilla de descuento", sign: 0,
+    up: "más tensión", down: "menos tensión",
+    note: "Préstamo de urgencia. Subir señala tensión bancaria, no política monetaria." },
+];
+
+const WINDOWS = [
+  { days: 28, label: "4 sem" },
+  { days: 91, label: "13 sem" },
+  { days: 364, label: "52 sem" },
+];
+
+const billions = (musd) => (musd / 1000).toLocaleString("es-ES",
+  { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " mM$";
+
+// La columna de niveles va de 6.760 mM$ a casi cero, así que por encima del
+// billón cambia de unidad en vez de arrastrar cuatro cifras.
+function level(musd) {
+  return Math.abs(musd) >= 1e6 ? trillions(musd) : billions(musd);
+}
+
+function signedBillions(musd) {
+  const formatted = billions(Math.abs(musd));
+  if (Math.abs(musd) < 50) return "≈0";
+  return (musd > 0 ? "+" : "−") + formatted;
+}
+
+function renderFlows(rows) {
+  const latest = rows[rows.length - 1];
+
+  const head = "<thead><tr><th>Indicador</th><th>Nivel</th>" +
+    WINDOWS.map((w) => `<th>${w.label}</th>`).join("") +
+    "<th>Lectura</th></tr></thead>";
+
+  const body = FLOWS.map((flow) => {
+    const cells = WINDOWS.map((w) => {
+      const past = rows[rows.length - 1 - w.days];
+      if (!past) return "<td>—</td>";
+      const change = latest[flow.key] - past[flow.key];
+      const arrow = Math.abs(change) < 50 ? "" : (change > 0 ? " ↑" : " ↓");
+      return `<td>${signedBillions(change)}${arrow}</td>`;
+    }).join("");
+
+    // Lectura sobre 13 semanas: una sola semana es ruido en series de este tamaño.
+    const reference = rows[rows.length - 1 - 91];
+    let reading = "—";
+    if (reference) {
+      const change = latest[flow.key] - reference[flow.key];
+      reading = Math.abs(change) < 50 ? "sin cambio"
+              : (change > 0 ? flow.up : flow.down);
+    }
+
+    return `<tr>
+      <td><strong>${flow.label}</strong><div class="hint">${flow.note}</div></td>
+      <td>${level(latest[flow.key])}</td>
+      ${cells}
+      <td>${reading}</td>
+    </tr>`;
+  }).join("");
+
+  document.getElementById("flowTable").innerHTML = head + `<tbody>${body}</tbody>`;
+
+  // El titular sale de las reservas: es donde acaba el saldo de todos los flujos.
+  const past = rows[rows.length - 1 - 91];
+  const verdict = document.getElementById("flowVerdict");
+  if (!past) { verdict.hidden = true; return; }
+  verdict.hidden = false;
+
+  const reservesChange = latest.reserves_musd - past.reserves_musd;
+  const balanceChange = latest.walcl_musd - past.walcl_musd;
+  const tgaChange = latest.wtregen_musd - past.wtregen_musd;
+
+  const direction = reservesChange > 0 ? "subiendo" : "bajando";
+  let explanation = "";
+  if (balanceChange > 0 && reservesChange < 0) {
+    explanation = ` La Fed <strong>sí</strong> está expandiendo su balance
+      (${signedBillions(balanceChange)}), pero el Tesoro ha absorbido
+      ${signedBillions(tgaChange)} en su cuenta y drena más de lo que la Fed mete.
+      Que el banco central inyecte y que haya más liquidez en los bancos son cosas
+      distintas, y ahora mismo apuntan en direcciones opuestas.`;
+  } else if (balanceChange < 0 && reservesChange > 0) {
+    explanation = ` Y eso pese a que el balance de la Fed se reduce
+      (${signedBillions(balanceChange)}): el efecto viene del Tesoro y del repo inverso,
+      no de la Fed.`;
+  }
+
+  verdict.innerHTML = `<strong>En 13 semanas las reservas bancarias van ${direction}
+    ${signedBillions(reservesChange)}.</strong>${explanation}`;
 }
 
 /* ---------- presentación ---------- */
@@ -702,6 +826,7 @@ function render() {
 
   renderStats(model, optimal, chosenLag, rows, key);
   renderMain(model, bandPercent);
+  renderFlows(rows);
   renderFreshness();
   renderTable(rows, key, model, chosenLag);
 }

@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-08-14T10:47:27Z",
+  "generated_at_utc": "2026-08-14T11:16:30Z",
   "rows": {
     "btc": 3148,
     "liquidity": 3148
@@ -10,8 +10,11 @@
     "DEXUSEU": "2026-08-07",
     "ECBASSETSW": "2026-08-07",
     "JPNASSETS": "2026-07-01",
+    "RPONTSYD": "2026-08-13",
     "RRPONTSYD": "2026-08-13",
     "WALCL": "2026-08-12",
+    "WLCFLPCL": "2026-08-12",
+    "WRESBAL": "2026-08-12",
     "WTREGEN": "2026-08-12"
   },
   "notes": [

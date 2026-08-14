@@ -13,11 +13,17 @@ import (
 type Inputs struct {
 	WALCL     map[time.Time]float64 // millions USD, weekly
 	WTREGEN   map[time.Time]float64 // millions USD, weekly
-	RRP       map[time.Time]float64 // billions USD, daily
+	RRP       map[time.Time]float64 // billions USD, daily — reverse repo, a drain
 	ECBAssets map[time.Time]float64 // millions EUR, weekly
 	BoJAssets map[time.Time]float64 // 100 million yen, monthly
 	USDPerEUR map[time.Time]float64 // DEXUSEU
 	YenPerUSD map[time.Time]float64 // DEXJPUS
+
+	// Diagnostics for whether liquidity is being injected or drained. They do
+	// not feed either headline series; they answer a different question.
+	Reserves       map[time.Time]float64 // millions USD, weekly — WRESBAL
+	Repo           map[time.Time]float64 // billions USD, daily — RPONTSYD, an injection
+	DiscountWindow map[time.Time]float64 // millions USD, weekly — WLCFLPCL
 }
 
 // Row is one day of the liquidity table. Components are carried alongside the
@@ -29,6 +35,11 @@ type Row struct {
 	RRPMUSD       float64
 	ECBAssetsMUSD float64
 	BoJAssetsMUSD float64
+
+	ReservesMUSD       float64
+	RepoMUSD           float64
+	DiscountWindowMUSD float64
+
 	FedNetLiqMUSD float64
 	GlobalCBMUSD  float64
 }
@@ -47,16 +58,14 @@ func Build(inputs Inputs, start, end time.Time) []Row {
 	ecbMUSD := convert(inputs.ECBAssets, inputs.USDPerEUR, liquidity.ECBToMUSD)
 	bojMUSD := convert(inputs.BoJAssets, inputs.YenPerUSD, liquidity.BoJToMUSD)
 
-	rrpMUSD := make(map[time.Time]float64, len(inputs.RRP))
-	for date, billions := range inputs.RRP {
-		rrpMUSD[date] = liquidity.RRPToMUSD(billions)
-	}
-
 	walcl := liquidity.ForwardFill(inputs.WALCL, start, end)
 	wtregen := liquidity.ForwardFill(inputs.WTREGEN, start, end)
-	rrp := liquidity.ForwardFill(rrpMUSD, start, end)
+	rrp := liquidity.ForwardFill(rescale(inputs.RRP), start, end)
 	ecb := liquidity.ForwardFill(ecbMUSD, start, end)
 	boj := liquidity.ForwardFill(bojMUSD, start, end)
+	reserves := liquidity.ForwardFill(inputs.Reserves, start, end)
+	repo := liquidity.ForwardFill(rescale(inputs.Repo), start, end)
+	discount := liquidity.ForwardFill(inputs.DiscountWindow, start, end)
 
 	rows := make([]Row, 0, int(end.Sub(start).Hours()/24)+1)
 	for date := start; !date.After(end); date = date.AddDate(0, 0, 1) {
@@ -65,22 +74,37 @@ func Build(inputs Inputs, start, end time.Time) []Row {
 		r, okR := rrp[date]
 		e, okE := ecb[date]
 		b, okB := boj[date]
-		if !okW || !okT || !okR || !okE || !okB {
+		res, okRes := reserves[date]
+		rp, okRp := repo[date]
+		dw, okDw := discount[date]
+		if !okW || !okT || !okR || !okE || !okB || !okRes || !okRp || !okDw {
 			continue
 		}
 
 		rows = append(rows, Row{
-			Date:          date,
-			WALCLMUSD:     w,
-			WTREGENMUSD:   tga,
-			RRPMUSD:       r,
-			ECBAssetsMUSD: e,
-			BoJAssetsMUSD: b,
-			FedNetLiqMUSD: liquidity.FedNetLiquidity(w, tga, r),
-			GlobalCBMUSD:  liquidity.GlobalCBBalance(w, e, b),
+			Date:               date,
+			WALCLMUSD:          w,
+			WTREGENMUSD:        tga,
+			RRPMUSD:            r,
+			ECBAssetsMUSD:      e,
+			BoJAssetsMUSD:      b,
+			ReservesMUSD:       res,
+			RepoMUSD:           rp,
+			DiscountWindowMUSD: dw,
+			FedNetLiqMUSD:      liquidity.FedNetLiquidity(w, tga, r),
+			GlobalCBMUSD:       liquidity.GlobalCBBalance(w, e, b),
 		})
 	}
 	return rows
+}
+
+// rescale converts a whole series published in billions to millions.
+func rescale(billions map[time.Time]float64) map[time.Time]float64 {
+	millions := make(map[time.Time]float64, len(billions))
+	for date, value := range billions {
+		millions[date] = liquidity.BillionsToMUSD(value)
+	}
+	return millions
 }
 
 // convert applies an FX conversion to each observation using the rate published

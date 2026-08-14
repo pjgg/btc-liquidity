@@ -27,6 +27,46 @@ func baseInputs() Inputs {
 		BoJAssets: map[time.Time]float64{day(2026, time.August, 1): 6_442_957},
 		USDPerEUR: map[time.Time]float64{day(2026, time.August, 5): 1.1559},
 		YenPerUSD: map[time.Time]float64{day(2026, time.August, 1): 157.54},
+
+		Reserves:       map[time.Time]float64{day(2026, time.August, 5): 2_944_059},
+		Repo:           map[time.Time]float64{day(2026, time.August, 5): 0.002},
+		DiscountWindow: map[time.Time]float64{day(2026, time.August, 5): 5_644},
+	}
+}
+
+// RRPONTSYD and RPONTSYD differ by one letter and mean opposite things: the
+// reverse repo drains cash from the system, the repo injects it. Crossing them
+// would flip the sign of the headline series while still producing a plausible
+// looking chart.
+func TestRepoAndReverseRepoAreNotCrossed(t *testing.T) {
+	inputs := baseInputs()
+	inputs.RRP = map[time.Time]float64{day(2026, time.August, 5): 0.725}  // 725 MUSD
+	inputs.Repo = map[time.Time]float64{day(2026, time.August, 5): 0.002} //   2 MUSD
+
+	rows := Build(inputs, day(2026, time.August, 5), day(2026, time.August, 5))
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+
+	closeTo(t, rows[0].RRPMUSD, 725.0)
+	closeTo(t, rows[0].RepoMUSD, 2.0)
+
+	// Only the reverse repo is subtracted from net liquidity. If the two were
+	// swapped this would come out 723 MUSD higher.
+	closeTo(t, rows[0].FedNetLiqMUSD, 6_759_955.0-963_950.0-725.0)
+}
+
+func TestDiagnosticsAreCarriedThrough(t *testing.T) {
+	rows := Build(baseInputs(), day(2026, time.August, 5), day(2026, time.August, 5))
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	closeTo(t, rows[0].ReservesMUSD, 2_944_059.0)
+	closeTo(t, rows[0].DiscountWindowMUSD, 5_644.0)
+
+	// Reserves are published in millions already and must not be rescaled.
+	if rows[0].ReservesMUSD > 1e7 {
+		t.Errorf("reserves look rescaled by 1000: %.0f", rows[0].ReservesMUSD)
 	}
 }
 

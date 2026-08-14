@@ -24,6 +24,18 @@ intervalo de predicción al 95 % abarca ±222 %, que es tanto como no predecir n
 Sigue siendo útil para ver la forma de ambas series y para comprobar la afirmación por uno
 mismo. No es una herramienta de decisión, y la página lo advierte.
 
+## ¿Inyectan o drenan?
+
+La página incluye un panel que responde esto con los flujos de la Reserva Federal a 4, 13 y
+52 semanas. Lo interesante es que el signo no es el mismo en todos: el balance de la Fed y el
+repo inyectan al subir, mientras que la cuenta del Tesoro y el repo inverso drenan al subir.
+El panel traduce cada uno a su lectura en vez de dejar los números crudos.
+
+El titular sale de las **reservas bancarias**, que son donde acaba el saldo de todos los
+flujos. Con los datos actuales la Fed está expandiendo su balance y aun así las reservas caen,
+porque el Tesoro absorbe más de lo que la Fed mete: *que el banco central inyecte* y *que haya
+más liquidez en los bancos* son cosas distintas, y ahora mismo van en direcciones opuestas.
+
 ## Cómo funciona
 
 ```
@@ -53,13 +65,21 @@ Todas sin clave de API, verificadas el 2026-08-14.
 | `ECBASSETSW` balance del BCE | `fredgraph.csv` | semanal | **Millones de EUR** |
 | `JPNASSETS` balance del BoJ | `fredgraph.csv` | mensual | **100 millones de YEN** |
 | `DEXUSEU`, `DEXJPUS` | `fredgraph.csv` | diaria | tipos de cambio |
+| `WRESBAL` reservas bancarias | `fredgraph.csv` | semanal | Millones USD |
+| `RPONTSYD` repo | `fredgraph.csv` | diaria | **Miles de millones** USD |
+| `WLCFLPCL` ventanilla de descuento | `fredgraph.csv` | semanal | Millones USD |
 
 Las unidades son distintas entre series y **eso es el mayor riesgo del proyecto**: sumarlas
 sin normalizar da un número que parece razonable y es falso. Todo se convierte a millones de
 USD en `internal/liquidity`, una sola vez, y los tests fijan cada conversión contra una
 observación real.
 
-Dos detalles que costaron encontrar:
+**`RPONTSYD` y `RRPONTSYD` se diferencian en una letra y significan lo contrario**: el repo
+inverso es efectivo que sale del sistema hacia la Fed, y el repo es efectivo que la Fed presta
+al sistema. Cruzarlos invertiría el signo de la liquidez neta produciendo un gráfico que sigue
+pareciendo verosímil. Hay un test que lo fija.
+
+Dos detalles más que costaron encontrar:
 
 - FRED publica **valores vacíos** en festivos (`2026-01-01,`). Leerlos como `0.0` multiplica
   por cero el balance convertido a ese tipo de cambio, y la curva se desploma un día de cada

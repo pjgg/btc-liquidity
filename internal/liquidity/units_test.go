@@ -23,10 +23,10 @@ func day(y int, m time.Month, d int) time.Time {
 	return time.Date(y, m, d, 0, 0, 0, 0, time.UTC)
 }
 
-func TestRRPToMUSD(t *testing.T) {
+func TestBillionsToMUSD(t *testing.T) {
 	// RRPONTSYD is published in billions; 0.450 billion == 450 million.
-	closeTo(t, RRPToMUSD(0.450), 450.0, 1e-9)
-	closeTo(t, RRPToMUSD(0.0), 0.0, 1e-9)
+	closeTo(t, BillionsToMUSD(0.450), 450.0, 1e-9)
+	closeTo(t, BillionsToMUSD(0.0), 0.0, 1e-9)
 }
 
 func TestECBToMUSD(t *testing.T) {

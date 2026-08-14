@@ -35,9 +35,13 @@ var stalenessLimitDays = map[string]int{
 	"monthly": 120,
 }
 
-// RRPToMUSD converts the overnight reverse repo facility from billions to
-// millions of dollars.
-func RRPToMUSD(billionsUSD float64) float64 {
+// BillionsToMUSD rescales a series published in billions.
+//
+// Both repo series need it, and they are opposites that differ by one letter:
+// RRPONTSYD (reverse repo, securities *sold* by the Fed) drains cash, while
+// RPONTSYD (repo, securities *purchased*) injects it. Naming this after either
+// one would invite wiring the wrong series to the wrong sign.
+func BillionsToMUSD(billionsUSD float64) float64 {
 	return billionsUSD * 1000.0
 }
 

@@ -28,6 +28,7 @@ var (
 	liquidityHeader = []string{
 		"date",
 		"walcl_musd", "wtregen_musd", "rrp_musd", "ecb_assets_musd", "boj_assets_musd",
+		"reserves_musd", "repo_musd", "discount_window_musd",
 		"fed_net_liq_musd", "global_cb_musd",
 	}
 )
@@ -46,6 +47,13 @@ var fredSeries = []struct{ id, frequency string }{
 	{"JPNASSETS", "monthly"},
 	{"DEXUSEU", "weekly"},
 	{"DEXJPUS", "weekly"},
+
+	// Whether liquidity is being injected or drained. RPONTSYD is the repo the
+	// Fed lends into the system; RRPONTSYD above is its opposite. One letter
+	// apart, opposite signs.
+	{"WRESBAL", "weekly"},
+	{"RPONTSYD", "daily"},
+	{"WLCFLPCL", "weekly"},
 }
 
 type metadata struct {
@@ -108,6 +116,10 @@ func run(dataDir, startFlag string) error {
 		BoJAssets: fetched["JPNASSETS"].Values,
 		USDPerEUR: fetched["DEXUSEU"].Values,
 		YenPerUSD: fetched["DEXJPUS"].Values,
+
+		Reserves:       fetched["WRESBAL"].Values,
+		Repo:           fetched["RPONTSYD"].Values,
+		DiscountWindow: fetched["WLCFLPCL"].Values,
 	}, start, today)
 	if len(rows) == 0 {
 		return fmt.Errorf("no liquidity rows built between %s and %s", startFlag, today.Format(time.DateOnly))
@@ -137,6 +149,9 @@ func run(dataDir, startFlag string) error {
 			money(row.RRPMUSD),
 			money(row.ECBAssetsMUSD),
 			money(row.BoJAssetsMUSD),
+			money(row.ReservesMUSD),
+			money(row.RepoMUSD),
+			money(row.DiscountWindowMUSD),
 			money(row.FedNetLiqMUSD),
 			money(row.GlobalCBMUSD),
 		})
