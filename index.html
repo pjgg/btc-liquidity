@@ -189,6 +189,19 @@
         </div>
       </div>
       <div class="field">
+        <label for="window">Ventana de comparación</label>
+        <select id="window" autocomplete="off">
+          <option value="30" selected>30 días</option>
+          <option value="90">90 días</option>
+          <option value="180">180 días</option>
+          <option value="365">365 días</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="amplitude">Amplitud de la liquidez</label>
+        <button id="amplitude" aria-pressed="true" autocomplete="off">Igualada</button>
+      </div>
+      <div class="field">
         <label for="criterion">Elegir serie por</label>
         <button id="criterion" aria-pressed="false" autocomplete="off">Variaciones</button>
       </div>
@@ -273,7 +286,11 @@
 "use strict";
 
 const DAY_MS = 86400000;
-const CHANGE_WINDOW = 30;   // días de la variación logarítmica usada para correlacionar
+// Ventana de la variación logarítmica con que se comparan las series. La relación
+// liquidez-precio es lenta, así que a 30 días se mide sobre todo ruido: sobre el
+// histórico completo la liquidez global pasa de r=+0,196 a 30 días a +0,441 a 365.
+// El precio es que las muestras independientes caen de 102 a 7.
+const DEFAULT_WINDOW = 30;
 const DEFAULT_LAG = 7;
 
 // Cada serie con los componentes que determinan su frescura. La observación más
@@ -295,7 +312,7 @@ const SERIES = [
 
 const byKey = new Map(SERIES.map((s) => [s.key, s]));
 
-const state = { rows: [], meta: null, logScale: true, criterion: "changes" };
+const state = { rows: [], meta: null, logScale: true, criterion: "changes", matchAmplitude: true };
 let mainChart;
 
 /* ---------- carga ---------- */
@@ -358,11 +375,11 @@ function pearson(xs, ys) {
 //
 // Se mide entre variaciones logarítmicas a 30 días y no entre niveles: dos series
 // con tendencia correlacionan cerca de 0,9 sin tener ninguna relación.
-function correlationAtLag(rows, key, lag) {
+function correlationAtLag(rows, key, lag, window) {
   const priceChange = [], liquidityChange = [];
-  for (let i = Math.max(CHANGE_WINDOW, lag + CHANGE_WINDOW); i < rows.length; i++) {
-    priceChange.push(Math.log(rows[i].close_usd / rows[i - CHANGE_WINDOW].close_usd));
-    liquidityChange.push(Math.log(rows[i - lag][key] / rows[i - lag - CHANGE_WINDOW][key]));
+  for (let i = Math.max(window, lag + window); i < rows.length; i++) {
+    priceChange.push(Math.log(rows[i].close_usd / rows[i - window].close_usd));
+    liquidityChange.push(Math.log(rows[i - lag][key] / rows[i - lag - window][key]));
   }
   return { correlation: pearson(priceChange, liquidityChange), samples: priceChange.length };
 }
@@ -384,8 +401,8 @@ function levelCorrelationAtLag(rows, key, lag) {
 // Las muestras se solapan: dos variaciones a 30 días consecutivas comparten 29 de
 // sus 30 días, así que N muestras crudas valen aproximadamente N/30 independientes.
 // Un r alto sobre pocas muestras no es una relación fuerte, es ruido.
-function strength(correlation, samples) {
-  const effective = samples / CHANGE_WINDOW;
+function strength(correlation, samples, window) {
+  const effective = samples / window;
   const r = Math.abs(correlation);
 
   if (!Number.isFinite(r)) return { word: "sin datos", effective };
@@ -405,12 +422,12 @@ function strength(correlation, samples) {
 // que tiene la tendencia más parecida a BTC — llamativa, pero eso es justo la
 // trampa. Las dos cifras están siempre en pantalla, así que la elección del
 // criterio no esconde nada.
-function bestSeries(rows, lag, criterion) {
+function bestSeries(rows, lag, criterion, window) {
   let best = null;
   for (const series of SERIES) {
     const r = criterion === "levels"
       ? levelCorrelationAtLag(rows, series.key, lag)
-      : correlationAtLag(rows, series.key, lag).correlation;
+      : correlationAtLag(rows, series.key, lag, window).correlation;
     if (!Number.isFinite(r)) continue;
     if (!best || r > best.r) best = { key: series.key, r };
   }
@@ -419,7 +436,8 @@ function bestSeries(rows, lag, criterion) {
 
 function applyBestSeries() {
   const lag = Number(document.getElementById("lag").value);
-  document.getElementById("series").value = bestSeries(selectedRows(), lag, state.criterion);
+  const window = Number(document.getElementById("window").value);
+  document.getElementById("series").value = bestSeries(selectedRows(), lag, state.criterion, window);
 }
 
 // Ajuste log-log del precio sobre la liquidez desfasada. Sirve para la columna
@@ -552,21 +570,46 @@ function line(label, data, color, order) {
 // Ambas series a base 100 en la primera fecha en que las dos existen. La liquidez
 // se dibuja desplazada `lag` días a la derecha: sobre cada fecha aparece la
 // liquidez de `lag` días antes, que es lo que significa «va por delante».
-function buildSeries(rows, key, lag) {
+function standardDeviation(values) {
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  return Math.sqrt(values.reduce((a, v) => a + (v - mean) ** 2, 0) / values.length);
+}
+
+// Las dos series a base 100, con la liquidez desplazada `lag` días a la derecha:
+// sobre cada fecha aparece la liquidez de `lag` días antes.
+//
+// Con la amplitud igualada, la liquidez se estira alrededor de su propia media
+// hasta tener la misma desviación típica que el precio. Es lo que hacen por debajo
+// los gráficos donde una línea de liquidez va superpuesta al eje de precios, sólo
+// que allí el factor no se dice; aquí se devuelve y se enseña. Se opera en
+// logaritmos porque lo que se iguala es la amplitud relativa.
+function buildSeries(rows, key, lag, matchAmplitude) {
   if (rows.length <= lag) return null;
 
   const btc = [], liquidity = [];
   const baseBTC = rows[lag].close_usd;
   const baseLiquidity = rows[0][key];
 
+  const logBTC = [], logLiquidity = [];
   for (let i = lag; i < rows.length; i++) {
-    const x = Date.parse(`${rows[i].date}T00:00:00Z`);
-    btc.push({ x, y: (rows[i].close_usd / baseBTC) * 100, real: usd(rows[i].close_usd) });
-
-    const source = rows[i - lag][key];
-    liquidity.push({ x, y: (source / baseLiquidity) * 100, real: trillions(source) });
+    logBTC.push(Math.log(rows[i].close_usd / baseBTC));
+    logLiquidity.push(Math.log(rows[i - lag][key] / baseLiquidity));
   }
-  return { btc, liquidity };
+
+  const spreadBTC = standardDeviation(logBTC);
+  const spreadLiquidity = standardDeviation(logLiquidity);
+  const factor = matchAmplitude && spreadLiquidity > 0 ? spreadBTC / spreadLiquidity : 1;
+  const meanLiquidity = logLiquidity.reduce((a, b) => a + b, 0) / logLiquidity.length;
+
+  for (let i = lag; i < rows.length; i++) {
+    const j = i - lag;
+    const x = Date.parse(`${rows[i].date}T00:00:00Z`);
+    btc.push({ x, y: Math.exp(logBTC[j]) * 100, real: usd(rows[i].close_usd) });
+
+    const stretched = meanLiquidity + (logLiquidity[j] - meanLiquidity) * factor;
+    liquidity.push({ x, y: Math.exp(stretched) * 100, real: trillions(rows[j][key]) });
+  }
+  return { btc, liquidity, factor };
 }
 
 function renderChart(series, key, lag) {
@@ -615,15 +658,15 @@ function renderChart(series, key, lag) {
 
 /* ---------- paneles ---------- */
 
-function renderStats(rows, key, lag, measured, levelCorrelation) {
+function renderStats(rows, key, lag, window, measured, levelCorrelation, factor) {
   const latest = rows[rows.length - 1];
   const stale = stalenessDays(key);
-  const quality = strength(measured.correlation, measured.samples);
+  const quality = strength(measured.correlation, measured.samples, window);
 
   const cards = [
     { k: "Relación", v: quality.word,
       n: Number.isFinite(measured.correlation)
-        ? `r = ${measured.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días · ~${Math.max(1, Math.round(quality.effective))} muestras independientes`
+        ? `r = ${measured.correlation.toFixed(3)} entre variaciones a ${window} días · ~${Math.max(1, Math.round(quality.effective))} muestras independientes`
         : "sin muestras suficientes" },
     { k: "Correlación de niveles",
       v: Number.isFinite(levelCorrelation) ? levelCorrelation.toFixed(3) : "—",
@@ -633,6 +676,10 @@ function renderStats(rows, key, lag, measured, levelCorrelation) {
     { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
     { k: "Desfase aplicado", v: days(lag),
       n: lag === 0 ? "las dos series sin desplazar" : "la liquidez va por delante" },
+    { k: "Amplitud", v: state.matchAmplitude ? `×${factor.toFixed(1)}` : "real",
+      n: state.matchAmplitude
+        ? `la liquidez se mueve ${factor.toFixed(1)} veces menos que el precio; en el gráfico va estirada por ese factor para poder comparar las formas`
+        : "cada serie con su recorrido real" },
   ];
 
   document.getElementById("stats").innerHTML = cards.map((c) => `
@@ -759,15 +806,16 @@ function selectedRows() {
 function render() {
   const key = document.getElementById("series").value;
   const lag = Number(document.getElementById("lag").value);
+  const window = Number(document.getElementById("window").value);
   const rows = selectedRows();
 
   const statusEl = document.getElementById("status");
-  if (rows.length <= lag + CHANGE_WINDOW + 2) {
+  if (rows.length <= lag + window + 2) {
     statusEl.hidden = false;
     statusEl.textContent =
       `El rango seleccionado tiene ${rows.length} días, que no dan para un desfase de ${lag} ` +
-      `más la ventana de ${CHANGE_WINDOW} días con que se mide la correlación. ` +
-      `Amplía el rango o reduce el desfase.`;
+      `más la ventana de ${window} días con que se comparan las series. ` +
+      `Amplía el rango, reduce el desfase o acorta la ventana.`;
     document.getElementById("app").hidden = true;
     return;
   }
@@ -778,11 +826,11 @@ function render() {
   document.getElementById("legendLiquidity").textContent =
     `${byKey.get(key).label}, ${days(lag)} antes`;
 
-  const series = buildSeries(rows, key, lag);
+  const series = buildSeries(rows, key, lag, state.matchAmplitude);
   if (!series) return;
 
-  renderStats(rows, key, lag, correlationAtLag(rows, key, lag),
-              levelCorrelationAtLag(rows, key, lag));
+  renderStats(rows, key, lag, window, correlationAtLag(rows, key, lag, window),
+              levelCorrelationAtLag(rows, key, lag), series.factor);
   renderChart(series, key, lag);
   renderFlows(rows);
   renderFreshness();
@@ -790,7 +838,7 @@ function render() {
 }
 
 function wireControls() {
-  for (const id of ["series", "from", "to", "lag"]) {
+  for (const id of ["series", "from", "to", "lag", "window"]) {
     document.getElementById(id).addEventListener("input", render);
   }
 
@@ -802,6 +850,14 @@ function wireControls() {
     criterionButton.setAttribute("aria-pressed", String(state.criterion === "levels"));
     criterionButton.textContent = state.criterion === "levels" ? "Niveles" : "Variaciones";
     applyBestSeries();
+    render();
+  });
+
+  const amplitudeButton = document.getElementById("amplitude");
+  amplitudeButton.addEventListener("click", () => {
+    state.matchAmplitude = !state.matchAmplitude;
+    amplitudeButton.setAttribute("aria-pressed", String(state.matchAmplitude));
+    amplitudeButton.textContent = state.matchAmplitude ? "Igualada" : "Real";
     render();
   });
 
@@ -833,6 +889,7 @@ async function main() {
     .toISOString().slice(0, 10);
 
   document.getElementById("lag").value = String(DEFAULT_LAG);
+  document.getElementById("window").value = String(DEFAULT_WINDOW);
   document.getElementById("to").value = last;
   document.getElementById("from").value = yearAgo > state.rows[0].date ? yearAgo : state.rows[0].date;
 
@@ -840,8 +897,32 @@ async function main() {
   // no sobre otros: elegir la mejor a 7 días y dibujarla a 85 daba un r sin sentido.
   applyBestSeries();
 
+  applyURLParams();
   wireControls();
   render();
+}
+
+// Toda la configuración cabe en la URL, de modo que una combinación concreta se
+// puede enlazar. Se aplica después de los valores por defecto para poder pisarlos.
+function applyURLParams() {
+  const params = new URLSearchParams(location.search);
+  const set = (name, id) => {
+    const value = params.get(name);
+    if (value !== null) document.getElementById(id).value = value;
+  };
+
+  set("serie", "series");
+  set("desde", "from");
+  set("hasta", "to");
+  set("desfase", "lag");
+  set("ventana", "window");
+
+  if (params.get("amplitud") === "real") {
+    state.matchAmplitude = false;
+    const button = document.getElementById("amplitude");
+    button.setAttribute("aria-pressed", "false");
+    button.textContent = "Real";
+  }
 }
 
 main();
