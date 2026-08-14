@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>BTC vs. liquidez de bancos centrales</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"
+        integrity="sha384-9nhczxUqK87bcKHh20fSQcTGD4qq5GhayNYSYWqwBkINBhOfQLg/P5HG5lF1urn4"
+        crossorigin="anonymous"></script>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --page: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --series-btc: #2a78d6;
+    --series-implied: #eb6834;
+    --band-envelope: rgba(235, 104, 52, 0.20);
+    --band-interval: rgba(235, 104, 52, 0.09);
+    --warning: #fab219;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --page: #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #898781;
+      --gridline: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255, 255, 255, 0.10);
+      --series-btc: #3987e5;
+      --series-implied: #d95926;
+      --band-envelope: rgba(217, 89, 38, 0.24);
+      --band-interval: rgba(217, 89, 38, 0.11);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --page: #0d0d0d;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-btc: #3987e5;
+    --series-implied: #d95926;
+    --band-envelope: rgba(217, 89, 38, 0.24);
+    --band-interval: rgba(217, 89, 38, 0.11);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 24px 64px;
+    background: var(--page);
+    color: var(--text-primary);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+
+  header { margin-bottom: 28px; }
+  h1 { font-size: 26px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .lede { color: var(--text-secondary); margin: 0; max-width: 68ch; }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card > h2 {
+    font-size: 15px; font-weight: 620; margin: 0 0 4px;
+  }
+  .card > .sub {
+    font-size: 13px; color: var(--text-secondary); margin: 0 0 18px; max-width: 74ch;
+  }
+
+  /* One filter row above everything it scopes. */
+  .filters {
+    display: flex; flex-wrap: wrap; gap: 22px 30px; align-items: flex-end;
+  }
+  .field { display: flex; flex-direction: column; gap: 6px; }
+  .field > label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted);
+  }
+  select, input[type="date"], button {
+    font: inherit; font-size: 14px;
+    background: var(--page); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--baseline); }
+  button[aria-pressed="true"] { border-color: var(--series-btc); color: var(--series-btc); }
+  input[type="range"] { width: 190px; accent-color: var(--series-implied); }
+  .range-row { display: flex; align-items: center; gap: 10px; }
+  .range-value {
+    font-variant-numeric: tabular-nums; font-size: 13px;
+    color: var(--text-secondary); min-width: 62px;
+  }
+
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(158px, 1fr)); gap: 1px;
+           background: var(--border); border: 1px solid var(--border); border-radius: 10px;
+           overflow: hidden; margin-bottom: 20px; }
+  .stat { background: var(--surface-1); padding: 16px 18px; }
+  .stat .k { font-size: 11px; font-weight: 600; text-transform: uppercase;
+             letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 7px; }
+  .stat .v { font-size: 25px; font-weight: 600; line-height: 1.1; letter-spacing: -0.015em; }
+  .stat .n { font-size: 12px; color: var(--text-secondary); margin-top: 5px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 14px; padding: 0; list-style: none; }
+  .legend li { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+  .swatch { width: 22px; height: 3px; border-radius: 2px; flex: none; }
+  .swatch.block { height: 12px; border-radius: 3px; }
+
+  .plot { position: relative; height: 400px; }
+  .plot.short { height: 240px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--gridline); }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: var(--text-muted); font-weight: 600; font-size: 11px;
+       text-transform: uppercase; letter-spacing: 0.06em; }
+  .scroll-x { overflow-x: auto; }
+  .table-wrap { max-height: 420px; overflow-y: auto; }
+
+  .freshness { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; }
+  .freshness div { font-size: 13px; }
+  .freshness .id { color: var(--text-secondary); }
+  .freshness .age { font-variant-numeric: tabular-nums; }
+
+  .verdict {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--warning);
+    border-radius: 10px;
+    padding: 15px 18px; margin: 0 0 20px;
+    font-size: 13.5px; color: var(--text-secondary);
+  }
+  .verdict strong { color: var(--text-primary); font-weight: 620; }
+
+  .note {
+    font-size: 13px; color: var(--text-secondary);
+    border-left: 2px solid var(--baseline); padding-left: 12px; margin: 14px 0 0;
+  }
+  .note strong { color: var(--text-primary); font-weight: 600; }
+  footer { color: var(--text-muted); font-size: 12.5px; margin-top: 28px; max-width: 78ch; }
+  code { font-size: 12px; background: var(--page); padding: 1px 5px; border-radius: 4px;
+         border: 1px solid var(--border); }
+  #status { color: var(--text-secondary); padding: 40px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Bitcoin frente a la liquidez de los bancos centrales</h1>
+  <p class="lede">
+    ¿La liquidez de los bancos centrales adelanta al precio de Bitcoin, y con cuántos días?
+    El desfase no se asume: se busca el que maximiza la correlación histórica, y con él se
+    ajusta un precio implícito de BTC. Como la liquidez de hoy ya se conoce, ese ajuste
+    proyecta hacia delante.
+  </p>
+</header>
+
+<div id="status">Cargando datos…</div>
+
+<main id="app" hidden>
+
+  <div class="card">
+    <div class="filters">
+      <div class="field">
+        <label for="series">Serie de liquidez</label>
+        <select id="series">
+          <option value="fed_net_liq_musd">Fed Net Liquidity (balance − TGA − RRP)</option>
+          <option value="global_cb_musd">Balances globales (Fed + BCE + BoJ)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="from">Desde</label>
+        <input type="date" id="from">
+      </div>
+      <div class="field">
+        <label for="to">Hasta</label>
+        <input type="date" id="to">
+      </div>
+      <div class="field">
+        <label for="lag">Desfase aplicado</label>
+        <div class="range-row">
+          <input type="range" id="lag" min="0" max="180" step="1">
+          <span class="range-value" id="lagValue"></span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="band">Envolvente</label>
+        <div class="range-row">
+          <input type="range" id="band" min="1" max="25" step="1" value="5">
+          <span class="range-value" id="bandValue">±5 %</span>
+        </div>
+      </div>
+      <div class="field">
+        <label for="logScale">Eje Y</label>
+        <button id="logScale" aria-pressed="true">Logarítmico</button>
+      </div>
+      <div class="field">
+        <label for="showInterval">Intervalo 95 %</label>
+        <button id="showInterval" aria-pressed="true">Visible</button>
+      </div>
+      <div class="field">
+        <label for="resetLag">Desfase</label>
+        <button id="resetLag">Volver al óptimo</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <p class="verdict" id="verdict" hidden></p>
+
+  <div class="card">
+    <h2>Precio real frente al implícito por liquidez</h2>
+    <p class="sub">
+      Ambas curvas están en dólares por bitcoin, sobre un único eje. La curva implícita sale
+      de un ajuste log-log del precio sobre la liquidez desfasada; el tramo a la derecha de
+      hoy es proyección, y se apoya en liquidez ya observada.
+    </p>
+    <ul class="legend">
+      <li><span class="swatch" style="background:var(--series-btc)"></span> BTC real</li>
+      <li><span class="swatch" style="background:var(--series-implied)"></span> BTC implícito por liquidez</li>
+      <li><span class="swatch block" style="background:var(--band-envelope)"></span> Envolvente elegida <span id="legendBand">±5 %</span></li>
+      <li><span class="swatch block" style="background:var(--band-interval)"></span> Intervalo de predicción 95 %</li>
+    </ul>
+    <div class="plot"><canvas id="mainChart"></canvas></div>
+    <p class="note" id="horizonNote"></p>
+  </div>
+
+  <div class="card">
+    <h2>Cómo se elige el desfase</h2>
+    <p class="sub">
+      Correlación entre la variación logarítmica a 30 días de BTC y la de la liquidez, para
+      cada desfase entre 0 y 180 días. Se usan variaciones y no niveles: dos series que suben
+      correlacionan casi al 0,9 sin tener relación alguna, así que un ajuste sobre niveles
+      devolvería un desfase sin significado.
+    </p>
+    <div class="plot short"><canvas id="lagChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>La serie de liquidez</h2>
+    <p class="sub">
+      En su propia escala y su propio gráfico. No se superpone al precio en un segundo eje Y:
+      la alineación entre dos escalas distintas es arbitraria e inventa una correlación visual
+      que no está en los datos.
+    </p>
+    <div class="plot short"><canvas id="liquidityChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>Frescura de los datos</h2>
+    <p class="sub">
+      Última observación real de cada fuente. Entre publicaciones el valor anterior se arrastra
+      —son variables de stock—, y ese arrastre recorta el horizonte útil de la proyección.
+    </p>
+    <div class="freshness" id="freshness"></div>
+  </div>
+
+  <div class="card">
+    <h2>Tabla de datos</h2>
+    <p class="sub">Últimas 120 filas del rango seleccionado. Todo valor del gráfico es legible aquí sin depender del tooltip.</p>
+    <div class="scroll-x table-wrap">
+      <table id="dataTable"></table>
+    </div>
+  </div>
+
+  <footer>
+    <p>
+      <strong>Esto no es asesoramiento financiero.</strong> Es una visualización basada en
+      correlación histórica. La envolvente ±5 % es un margen elegido a mano y no tiene
+      significado estadístico; el intervalo de predicción al 95 % sí se deriva de los residuos
+      del ajuste. Una correlación alta no implica causalidad, y un desfase que funcionó en el
+      pasado puede dejar de hacerlo.
+    </p>
+    <p>
+      China queda fuera del agregado global: el PBoC no publica serie en FRED y todas las
+      series de M2 internacional que se probaron están descontinuadas. Fuentes:
+      <code>fredgraph.csv</code> (Reserva Federal de St. Louis) y <code>api.binance.com</code>,
+      ambas sin clave de API. Los datos los regenera a diario un GitHub Action y viven en
+      <code>data/*.csv</code> de este repositorio.
+    </p>
+  </footer>
+</main>
+</div>
+
+<script>
+"use strict";
+
+const DAY_MS = 86400000;
+const MAX_LAG = 180;
+const CHANGE_WINDOW = 30;   // días de la variación logarítmica usada para correlacionar
+const Z95 = 1.96;
+
+// Series que determinan la frescura de cada agregado. La más antigua manda: es la
+// que limita cuánto de la proyección se apoya en datos reales.
+const COMPONENTS = {
+  fed_net_liq_musd: ["WALCL", "WTREGEN", "RRPONTSYD"],
+  global_cb_musd: ["WALCL", "ECBASSETSW", "JPNASSETS", "DEXUSEU", "DEXJPUS"],
+};
+
+const LABELS = {
+  fed_net_liq_musd: "Fed Net Liquidity",
+  global_cb_musd: "Balances globales",
+};
+
+const state = { rows: [], meta: null, lagTouched: false, logScale: true, showInterval: true };
+let mainChart, lagChart, liquidityChart;
+
+/* ---------- carga ---------- */
+
+async function fetchNoCache(path) {
+  const response = await fetch(`${path}?t=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error(`${path} devolvió HTTP ${response.status}`);
+  return response;
+}
+
+function parseCSV(text) {
+  const lines = text.trim().split("\n");
+  const header = lines[0].split(",");
+  return lines.slice(1).map((line) => {
+    const cells = line.split(",");
+    const row = { date: cells[0] };
+    for (let i = 1; i < header.length; i++) row[header[i]] = Number(cells[i]);
+    return row;
+  });
+}
+
+async function load() {
+  const [btcText, liquidityText, meta] = await Promise.all([
+    fetchNoCache("data/btc.csv").then((r) => r.text()),
+    fetchNoCache("data/liquidity.csv").then((r) => r.text()),
+    fetchNoCache("data/meta.json").then((r) => r.json()),
+  ]);
+
+  const liquidityByDate = new Map(parseCSV(liquidityText).map((r) => [r.date, r]));
+
+  // Sólo las fechas con precio y liquidez. Ambos ficheros son diarios y continuos,
+  // así que el índice resultante también lo es y se puede recorrer por posición.
+  state.rows = parseCSV(btcText)
+    .filter((r) => liquidityByDate.has(r.date) && r.close_usd > 0)
+    .map((r) => ({ ...liquidityByDate.get(r.date), close_usd: r.close_usd }));
+  state.meta = meta;
+}
+
+/* ---------- modelo ---------- */
+
+function pearson(xs, ys) {
+  const n = xs.length;
+  if (n < 2) return NaN;
+  let sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+  const mx = sx / n, my = sy / n;
+
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < n; i++) {
+    const dx = xs[i] - mx, dy = ys[i] - my;
+    sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+  }
+  if (sxx === 0 || syy === 0) return NaN;
+  return sxy / Math.sqrt(sxx * syy);
+}
+
+// Correlación entre variaciones logarítmicas, no entre niveles. Sobre niveles, dos
+// series con tendencia correlacionan casi perfectamente y el argmax no significa nada.
+function lagCorrelations(logPrice, logLiquidity) {
+  const n = logPrice.length;
+  const out = [];
+
+  for (let lag = 0; lag <= MAX_LAG; lag++) {
+    const priceChange = [], liquidityChange = [];
+    for (let i = Math.max(CHANGE_WINDOW, lag + CHANGE_WINDOW); i < n; i++) {
+      priceChange.push(logPrice[i] - logPrice[i - CHANGE_WINDOW]);
+      liquidityChange.push(logLiquidity[i - lag] - logLiquidity[i - lag - CHANGE_WINDOW]);
+    }
+    out.push({ lag, correlation: pearson(priceChange, liquidityChange), n: priceChange.length });
+  }
+  return out;
+}
+
+function bestLag(correlations) {
+  let best = correlations[0];
+  for (const candidate of correlations) {
+    if (Number.isFinite(candidate.correlation) &&
+        (!Number.isFinite(best.correlation) || candidate.correlation > best.correlation)) {
+      best = candidate;
+    }
+  }
+  return best;
+}
+
+// Mínimos cuadrados de log(precio) sobre log(liquidez desfasada).
+function fitLogLog(logPrice, logLiquidity, lag) {
+  const xs = [], ys = [];
+  for (let i = lag; i < logPrice.length; i++) {
+    xs.push(logLiquidity[i - lag]);
+    ys.push(logPrice[i]);
+  }
+  const n = xs.length;
+  if (n < 3) return null;
+
+  let sx = 0, sy = 0;
+  for (let i = 0; i < n; i++) { sx += xs[i]; sy += ys[i]; }
+  const mx = sx / n, my = sy / n;
+
+  let sxy = 0, sxx = 0;
+  for (let i = 0; i < n; i++) {
+    sxy += (xs[i] - mx) * (ys[i] - my);
+    sxx += (xs[i] - mx) ** 2;
+  }
+  if (sxx === 0) return null;
+
+  const slope = sxy / sxx;
+  const intercept = my - slope * mx;
+
+  let residualSS = 0, totalSS = 0;
+  for (let i = 0; i < n; i++) {
+    residualSS += (ys[i] - (intercept + slope * xs[i])) ** 2;
+    totalSS += (ys[i] - my) ** 2;
+  }
+  // n-2 grados de libertad: se han estimado pendiente e intercepto.
+  const sigma = Math.sqrt(residualSS / Math.max(1, n - 2));
+  return { intercept, slope, sigma, r2: totalSS === 0 ? NaN : 1 - residualSS / totalSS, n };
+}
+
+/* ---------- ensamblado de series para el gráfico ---------- */
+
+function buildModel(rows, key, lag, bandPercent) {
+  const logPrice = rows.map((r) => Math.log(r.close_usd));
+  const logLiquidity = rows.map((r) => Math.log(r[key]));
+
+  const correlations = lagCorrelations(logPrice, logLiquidity);
+  const fit = fitLogLog(logPrice, logLiquidity, lag);
+  if (!fit) return null;
+
+  const lastDate = Date.parse(`${rows[rows.length - 1].date}T00:00:00Z`);
+  const actual = [], implied = [], envelopeHigh = [], envelopeLow = [], intervalHigh = [], intervalLow = [];
+  const band = bandPercent / 100;
+  const intervalFactor = Math.exp(Z95 * fit.sigma);
+
+  // El histórico llega hasta hoy; después, los `lag` días siguientes se proyectan con
+  // liquidez ya observada. Ahí está el valor del desfase: cuanto mayor, más horizonte.
+  for (let i = 0; i < rows.length + lag; i++) {
+    const inHistory = i < rows.length;
+    const x = inHistory ? Date.parse(`${rows[i].date}T00:00:00Z`) : lastDate + (i - rows.length + 1) * DAY_MS;
+
+    if (inHistory) actual.push({ x, y: rows[i].close_usd });
+
+    const source = i - lag;
+    if (source < 0) continue;
+    const value = Math.exp(fit.intercept + fit.slope * logLiquidity[source]);
+
+    implied.push({ x, y: value });
+    envelopeHigh.push({ x, y: value * (1 + band) });
+    envelopeLow.push({ x, y: value * (1 - band) });
+    intervalHigh.push({ x, y: value * intervalFactor });
+    intervalLow.push({ x, y: value / intervalFactor });
+  }
+
+  return { fit, correlations, actual, implied, envelopeHigh, envelopeLow, intervalHigh, intervalLow, lastDate };
+}
+
+function stalenessDays(key, meta) {
+  const today = Date.now();
+  let oldest = 0;
+  for (const id of COMPONENTS[key]) {
+    const observed = meta.last_observation[id];
+    if (!observed) continue;
+    const age = Math.floor((today - Date.parse(`${observed}T00:00:00Z`)) / DAY_MS);
+    if (age > oldest) oldest = age;
+  }
+  return oldest;
+}
+
+/* ---------- presentación ---------- */
+
+const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+// useGrouping "always" evita que 8000 salga sin separador junto a 10.000 en el
+// mismo eje: es-ES no agrupa los números de cuatro cifras por defecto.
+const usd = (v) => "$" + Math.round(v).toLocaleString("es-ES", { useGrouping: "always" });
+const trillions = (musd) => (musd / 1e6).toLocaleString("es-ES",
+  { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " B$";
+
+// La correlación entre variaciones es la que dice si la relación existe. Se
+// nombra en palabras para que nadie lea un 0,18 como si fuera una predicción.
+function strength(correlation) {
+  const r = Math.abs(correlation);
+  if (!Number.isFinite(r)) return { word: "sin datos", weak: true };
+  if (r < 0.20) return { word: "muy débil", weak: true };
+  if (r < 0.40) return { word: "débil", weak: true };
+  if (r < 0.60) return { word: "moderada", weak: false };
+  return { word: "fuerte", weak: false };
+}
+
+function axisDefaults() {
+  return {
+    grid: { color: css("--gridline"), lineWidth: 1, drawTicks: false, tickLength: 0 },
+    border: { color: css("--baseline"), width: 1 },
+    ticks: { color: css("--text-muted"), font: { size: 11 }, padding: 8, maxRotation: 0 },
+  };
+}
+
+function timeAxis(unitHint) {
+  const axis = axisDefaults();
+  axis.type = "linear";
+  axis.grid.display = false;
+  axis.ticks.callback = (value) => {
+    const d = new Date(value);
+    return unitHint === "year"
+      ? String(d.getUTCFullYear())
+      : d.toLocaleDateString("es-ES", { month: "short", year: "2-digit", timeZone: "UTC" });
+  };
+  return axis;
+}
+
+function line(label, data, color, extra = {}) {
+  return {
+    label, data, borderColor: color, backgroundColor: color,
+    borderWidth: 2, pointRadius: 0, pointHoverRadius: 0,
+    tension: 0, spanGaps: false, ...extra,
+  };
+}
+
+function renderMain(model, bandPercent) {
+  const canvas = document.getElementById("mainChart");
+  const datasets = [];
+
+  if (state.showInterval) {
+    datasets.push(
+      line("Intervalo 95 % (alto)", model.intervalHigh, "transparent",
+           { borderWidth: 0, backgroundColor: css("--band-interval"), fill: "+1", order: 5 }),
+      line("Intervalo 95 % (bajo)", model.intervalLow, "transparent", { borderWidth: 0, order: 5 }),
+    );
+  }
+  datasets.push(
+    line(`Envolvente +${bandPercent} %`, model.envelopeHigh, "transparent",
+         { borderWidth: 0, backgroundColor: css("--band-envelope"), fill: "+1", order: 4 }),
+    line(`Envolvente −${bandPercent} %`, model.envelopeLow, "transparent", { borderWidth: 0, order: 4 }),
+    line("BTC implícito por liquidez", model.implied, css("--series-implied"), { order: 2 }),
+    line("BTC real", model.actual, css("--series-btc"), { order: 1 }),
+  );
+
+  const yAxis = axisDefaults();
+  yAxis.type = state.logScale ? "logarithmic" : "linear";
+  yAxis.ticks.callback = (value) => usd(value);
+
+  const config = {
+    type: "line",
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, normalized: true,
+      animation: false,
+      interaction: { mode: "index", intersect: false, axis: "x" },
+      scales: { x: { ...timeAxis("year"), min: model.actual[0].x }, y: yAxis },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: css("--surface-1"),
+          titleColor: css("--text-primary"),
+          bodyColor: css("--text-secondary"),
+          borderColor: css("--border"), borderWidth: 1,
+          padding: 11, boxPadding: 5, usePointStyle: true,
+          filter: (item) => item.dataset.borderWidth > 0,
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x)
+              .toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }),
+            label: (item) => ` ${item.dataset.label}: ${usd(item.parsed.y)}`,
+          },
+        },
+      },
+    },
+  };
+
+  if (mainChart) mainChart.destroy();
+  mainChart = new Chart(canvas, config);
+}
+
+function renderLagChart(correlations, chosenLag, optimalLag) {
+  const yAxis = axisDefaults();
+  yAxis.ticks.callback = (v) => v.toFixed(2);
+
+  const xAxis = axisDefaults();
+  xAxis.type = "linear";
+  xAxis.grid.display = false;
+  xAxis.ticks.callback = (v) => `${v} d`;
+
+  const points = correlations.map((c) => ({ x: c.lag, y: c.correlation }));
+  const marker = (lag, color, label) => ({
+    label,
+    data: correlations.filter((c) => c.lag === lag).map((c) => ({ x: c.lag, y: c.correlation })),
+    borderColor: color, backgroundColor: color,
+    pointRadius: 5, pointHoverRadius: 7, borderWidth: 2, showLine: false,
+  });
+
+  const config = {
+    type: "line",
+    data: {
+      datasets: [
+        line("Correlación", points, css("--series-btc"), { order: 3 }),
+        marker(optimalLag, css("--series-implied"), "Óptimo"),
+        marker(chosenLag, css("--text-primary"), "Seleccionado"),
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: "index", intersect: false, axis: "x" },
+      scales: { x: xAxis, y: yAxis },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: css("--surface-1"), titleColor: css("--text-primary"),
+          bodyColor: css("--text-secondary"), borderColor: css("--border"), borderWidth: 1,
+          padding: 11,
+          callbacks: {
+            title: (items) => `Desfase de ${items[0].parsed.x} días`,
+            label: (item) => ` ${item.dataset.label}: ${item.parsed.y.toFixed(3)}`,
+          },
+        },
+      },
+    },
+  };
+
+  if (lagChart) lagChart.destroy();
+  lagChart = new Chart(document.getElementById("lagChart"), config);
+}
+
+function renderLiquidityChart(rows, key) {
+  const yAxis = axisDefaults();
+  yAxis.ticks.callback = (v) => trillions(v);
+
+  const data = rows.map((r) => ({ x: Date.parse(`${r.date}T00:00:00Z`), y: r[key] }));
+
+  const config = {
+    type: "line",
+    data: { datasets: [line(LABELS[key], data, css("--series-implied"))] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false, normalized: true,
+      interaction: { mode: "index", intersect: false, axis: "x" },
+      scales: { x: { ...timeAxis("year"), min: data[0].x }, y: yAxis },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: css("--surface-1"), titleColor: css("--text-primary"),
+          bodyColor: css("--text-secondary"), borderColor: css("--border"), borderWidth: 1,
+          padding: 11,
+          callbacks: {
+            title: (items) => new Date(items[0].parsed.x)
+              .toLocaleDateString("es-ES", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }),
+            label: (item) => ` ${item.dataset.label}: ${trillions(item.parsed.y)}`,
+          },
+        },
+      },
+    },
+  };
+
+  if (liquidityChart) liquidityChart.destroy();
+  liquidityChart = new Chart(document.getElementById("liquidityChart"), config);
+}
+
+function renderStats(model, optimal, chosenLag, rows, key) {
+  const latest = rows[rows.length - 1];
+  const impliedToday = model.implied[model.implied.length - 1 - chosenLag];
+  const gap = impliedToday ? (latest.close_usd / impliedToday.y - 1) * 100 : NaN;
+  const stale = stalenessDays(key, state.meta);
+  const horizon = chosenLag - stale;
+
+  const quality = strength(optimal.correlation);
+  const intervalSpan = (Math.exp(Z95 * model.fit.sigma) - 1) * 100;
+
+  const cards = [
+    { k: "Relación", v: quality.word,
+      n: `r = ${optimal.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días` },
+    { k: "Desfase óptimo", v: `${optimal.lag} d`,
+      n: `medido sobre ${optimal.n.toLocaleString("es-ES")} días` },
+    { k: "BTC hoy", v: usd(latest.close_usd), n: latest.date },
+    { k: "BTC implícito hoy", v: impliedToday ? usd(impliedToday.y) : "—",
+      n: Number.isFinite(gap) ? `el real está un ${gap >= 0 ? "+" : ""}${gap.toFixed(1)} % por encima` : "" },
+    { k: "Incertidumbre", v: `±${Math.round(intervalSpan)} %`,
+      n: `intervalo 95 % · σ ${model.fit.sigma.toFixed(3)} · elasticidad ${model.fit.slope.toFixed(2)}` },
+    { k: "Horizonte útil", v: horizon > 0 ? `${horizon} d` : "0 d",
+      n: `${chosenLag} d de desfase − ${stale} d de retraso en los datos` },
+  ];
+
+  document.getElementById("stats").innerHTML = cards.map((c) => `
+    <div class="stat">
+      <div class="k">${c.k}</div>
+      <div class="v">${c.v}</div>
+      <div class="n">${c.n}</div>
+    </div>`).join("");
+
+  const verdict = document.getElementById("verdict");
+  if (quality.weak) {
+    verdict.hidden = false;
+    verdict.innerHTML = `<strong>La relación que mide esta página es ${quality.word}.</strong>
+      Con r = ${optimal.correlation.toFixed(3)} entre variaciones a ${CHANGE_WINDOW} días, la
+      liquidez explica muy poco del movimiento de BTC en este rango, y el intervalo de
+      predicción al 95 % abarca ±${Math.round(intervalSpan)} %: el precio implícito no es una
+      previsión utilizable. El gráfico sigue siendo válido para ver la forma de las dos series,
+      no para decidir nada. Prueba otra serie o un rango distinto y observa si la correlación mejora.`;
+  } else {
+    verdict.hidden = true;
+  }
+
+  const note = document.getElementById("horizonNote");
+  if (horizon <= 0) {
+    note.innerHTML = `<strong>La proyección no llega a superar el retraso de los datos.</strong>
+      La fuente más atrasada de ${LABELS[key]} tiene ${stale} días de antigüedad y el desfase
+      aplicado es de ${chosenLag} días, así que la parte proyectada se apoya en valores
+      arrastrados, no en observaciones nuevas. Sube el desfase o cambia de serie.`;
+  } else {
+    note.innerHTML = `Los próximos <strong>${horizon} días</strong> de la curva implícita se
+      apoyan en liquidez ya observada. Del desfase de ${chosenLag} días hay que descontar los
+      ${stale} días que la fuente más atrasada de ${LABELS[key]} lleva sin publicar.`;
+  }
+}
+
+function renderFreshness() {
+  const today = Date.now();
+  document.getElementById("freshness").innerHTML = Object.entries(state.meta.last_observation)
+    .sort((a, b) => Date.parse(a[1]) - Date.parse(b[1]))
+    .map(([id, date]) => {
+      const age = Math.floor((today - Date.parse(`${date}T00:00:00Z`)) / DAY_MS);
+      return `<div><div class="id">${id}</div>
+              <div class="age">${date} · <span style="color:var(--text-muted)">${age} d</span></div></div>`;
+    }).join("");
+}
+
+function renderTable(rows, key, model, chosenLag) {
+  const impliedByTime = new Map(model.implied.map((p) => [p.x, p.y]));
+  const slice = rows.slice(-120).reverse();
+
+  const head = `<thead><tr><th>Fecha</th><th>BTC real</th><th>BTC implícito</th>
+    <th>Diferencia</th><th>${LABELS[key]}</th></tr></thead>`;
+
+  const body = slice.map((r) => {
+    const time = Date.parse(`${r.date}T00:00:00Z`);
+    const implied = impliedByTime.get(time);
+    const diff = implied ? (r.close_usd / implied - 1) * 100 : NaN;
+    return `<tr>
+      <td>${r.date}</td>
+      <td>${usd(r.close_usd)}</td>
+      <td>${implied ? usd(implied) : "—"}</td>
+      <td>${Number.isFinite(diff) ? `${diff >= 0 ? "+" : ""}${diff.toFixed(1)} %` : "—"}</td>
+      <td>${trillions(r[key])}</td>
+    </tr>`;
+  }).join("");
+
+  document.getElementById("dataTable").innerHTML = head + `<tbody>${body}</tbody>`;
+}
+
+/* ---------- orquestación ---------- */
+
+function selectedRows() {
+  const from = document.getElementById("from").value;
+  const to = document.getElementById("to").value;
+  return state.rows.filter((r) => (!from || r.date >= from) && (!to || r.date <= to));
+}
+
+function render() {
+  const key = document.getElementById("series").value;
+  const rows = selectedRows();
+  if (rows.length < CHANGE_WINDOW + MAX_LAG + 10) {
+    document.getElementById("status").hidden = false;
+    document.getElementById("status").textContent =
+      `El rango seleccionado tiene ${rows.length} días; hacen falta al menos ${CHANGE_WINDOW + MAX_LAG + 10} para buscar el desfase.`;
+    document.getElementById("app").hidden = true;
+    return;
+  }
+  document.getElementById("status").hidden = true;
+  document.getElementById("app").hidden = false;
+
+  const logPrice = rows.map((r) => Math.log(r.close_usd));
+  const logLiquidity = rows.map((r) => Math.log(r[key]));
+  const optimal = bestLag(lagCorrelations(logPrice, logLiquidity));
+
+  const lagInput = document.getElementById("lag");
+  if (!state.lagTouched) lagInput.value = optimal.lag;
+  const chosenLag = Number(lagInput.value);
+  const bandPercent = Number(document.getElementById("band").value);
+
+  document.getElementById("lagValue").textContent = `${chosenLag} días`;
+  document.getElementById("bandValue").textContent = `±${bandPercent} %`;
+  document.getElementById("legendBand").textContent = `±${bandPercent} %`;
+
+  const model = buildModel(rows, key, chosenLag, bandPercent);
+  if (!model) return;
+
+  renderStats(model, optimal, chosenLag, rows, key);
+  renderMain(model, bandPercent);
+  renderLagChart(model.correlations, chosenLag, optimal.lag);
+  renderLiquidityChart(rows, key);
+  renderFreshness();
+  renderTable(rows, key, model, chosenLag);
+}
+
+function wireControls() {
+  const rerender = () => render();
+
+  document.getElementById("series").addEventListener("change", () => {
+    state.lagTouched = false;   // cada serie tiene su propio óptimo
+    render();
+  });
+  document.getElementById("from").addEventListener("change", rerender);
+  document.getElementById("to").addEventListener("change", rerender);
+  document.getElementById("band").addEventListener("input", rerender);
+
+  document.getElementById("lag").addEventListener("input", () => {
+    state.lagTouched = true;
+    render();
+  });
+  document.getElementById("resetLag").addEventListener("click", () => {
+    state.lagTouched = false;
+    render();
+  });
+
+  const logButton = document.getElementById("logScale");
+  logButton.addEventListener("click", () => {
+    state.logScale = !state.logScale;
+    logButton.setAttribute("aria-pressed", String(state.logScale));
+    logButton.textContent = state.logScale ? "Logarítmico" : "Lineal";
+    render();
+  });
+
+  // La banda de predicción puede ser muy ancha y aplastar las dos curvas. Se
+  // puede ocultar para leerlas, pero arranca visible: esconder la incertidumbre
+  // por defecto haría que el ajuste pareciese más fiable de lo que es.
+  const intervalButton = document.getElementById("showInterval");
+  intervalButton.addEventListener("click", () => {
+    state.showInterval = !state.showInterval;
+    intervalButton.setAttribute("aria-pressed", String(state.showInterval));
+    intervalButton.textContent = state.showInterval ? "Visible" : "Oculto";
+    render();
+  });
+}
+
+async function main() {
+  try {
+    await load();
+  } catch (error) {
+    document.getElementById("status").textContent = `No se pudieron cargar los datos: ${error.message}`;
+    return;
+  }
+
+  document.getElementById("from").value = state.rows[0].date;
+  document.getElementById("to").value = state.rows[state.rows.length - 1].date;
+
+  wireControls();
+  render();
+}
+
+main();
+</script>
+</body>
+</html>

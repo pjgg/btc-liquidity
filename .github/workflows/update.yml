@@ -1,0 +1,48 @@
+name: Update data
+
+on:
+  # 23:59 UTC. GitHub's scheduler is best-effort and can run late under load, so
+  # rows are labelled by UTC date rather than by when the job happened to fire.
+  schedule:
+    - cron: "59 23 * * *"
+  workflow_dispatch:
+
+# The job commits the refreshed CSVs with the built-in token. Both upstream feeds
+# are keyless, so no repository secrets are configured.
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Unit conversions are the failure mode that would corrupt the data
+      # silently, so the tests gate the write rather than running after it.
+      - name: Test
+        run: go test ./...
+
+      - name: Refresh CSVs
+        run: go run ./cmd/update
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/
+          if git diff --cached --quiet; then
+            echo "No data changes today."
+            exit 0
+          fi
+          git commit -m "chore(data): daily update $(date -u +%Y-%m-%d)"
+          git push
