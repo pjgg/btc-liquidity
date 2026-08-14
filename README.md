@@ -68,12 +68,6 @@ Dos detalles que costaron encontrar:
   una cifra del BoJ de hace seis semanas al tipo de hoy inventaría un salto en el agregado
   global cada vez que se moviera el yen.
 
-### Lo que no se pudo usar
-
-No existe una serie de M2 global accesible: `MYAGM2EZM196N` (BCE) acaba en 2017,
-`MYAGM2JPM189S` (Japón) en 2017, `MYAGM2CNM189N` (China) en 2019, y no hay ninguna serie del
-PBoC en FRED. Por eso el agregado son **balances de bancos centrales** y **China queda fuera**.
-
 ## Uso local
 
 ```bash
